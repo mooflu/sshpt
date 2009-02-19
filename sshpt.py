@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # TODO:  Add the ability to pass command line arguments to uploaded and executed files
+# TODO:  Add stderr handling
 
 # Import standard Python modules
 import getpass, threading, Queue, sys, os, re
@@ -16,7 +17,7 @@ except:
     print("ERROR: paramiko is a required module. Please install it")
     exit(1)
     
-__version__ = '1.0.2'
+__version__ = '1.0.3'
 __license__ = "GNU General Public License (GPL) Version 3"
 __version_info__ = (1, 0, 0)
 __author__ = 'Dan McDougall <YouKnowWho@YouKnowWhat.com>'
@@ -212,14 +213,14 @@ def sftpPut(transport, local_filepath, remote_filepath):
     sftp = transport.open_sftp()
     filename = os.path.basename(local_filepath)
     if filename not in remote_filepath:
-        remote_filepath = os.path.normpath(remote_filepath + "/" + filename)
+        remote_filepath = os.path.normpath(remote_filepath + "/")
     debug("SFTP'ing %s to the server as %s" % (local_filepath, remote_filepath))
     sftp.put(local_filepath, remote_filepath)
 
 def sudoExecute(transport, command, password, run_as='root'):
     """Executes the given command via sudo as the specified user (run_as) using the given Paramiko transport object.
     Returns stdout, stderr (after command execution)"""
-    debug("sudoExecute: Running '%s' via sudo as '%s'" % (command, run_as))
+    debug("sudoExecute: Running 'sudo %s' as '%s'" % (command, run_as))
     stdin, stdout, stderr = transport.exec_command("sudo -S -u %s %s" % (run_as, command))
     if stdout.channel.closed is False: # If stdout is still open then sudo is asking us for a password
         stdin.write('%s\n' % password)
@@ -232,6 +233,7 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
     if sudo:
         stdout, stderr = sudoExecute(transport=transport, command=command, password=password, run_as=run_as)
     else:
+        debug("executeCommand: Running '%s'" % command)
         stdin, stdout, stderr = transport.exec_command(command)
     command_output = stdout.readlines()
     return command_output
@@ -239,35 +241,43 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
 def attemptConnection(hostname, username, password, timeout=30, command=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
     """Attempt to login to 'hostname' using 'username'/'password' and execute 'command'.
     Will excute the command via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
-    Returns the connection result as a boolean and the command result as a string."""
+    Returns connection_result as a boolean and command_result as a string."""
 
     debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (hostname, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
     connection_result = True
     
-    # TODO: Add stderr handling
     if hostname != "":
         try:
             ssh = paramikoConnect(hostname, username, password, timeout)
-            if type(ssh) == type(""): # If ssh is a string that means the connection failed and 'ssh' is the detail as to why
+            if type(ssh) == type(""): # If ssh is a string that means the connection failed and 'ssh' is the details as to why
                 connection_result = False
                 command_output = ssh
                 return connection_result, command_output
             if local_filepath:
-                sftpPut(ssh, local_filepath, remote_filepath)
+                if sudo: # SFTP the file to a temporary location then copy/move it to the final destination via sudo
+                    sftpPut(ssh, local_filepath, '/tmp/sshpt_temp')
+                    copy_command = "cp -f /tmp/sshpt_temp /tmp/sshpt_temp2" # Copy the file to another temp location so it gets the sudo user's default ownership
+                    executeCommand(transport=ssh, command=copy_command, sudo=sudo, run_as=run_as, password=password)
+                    move_command = "mv -f /tmp/sshpt_temp2 %s" % remote_filepath # Move the file to its final destination
+                    executeCommand(transport=ssh, command=move_command, sudo=sudo, run_as=run_as, password=password)
+                    cleanup_command = "rm -f /tmp/sshpt_temp" # Clean up after ourselves
+                    executeCommand(transport=ssh, command=cleanup_command, sudo=sudo, run_as=run_as, password=password)
+                else:
+                    sftpPut(ssh, local_filepath, remote_filepath)
                 if execute:
-                    debug("attemptConnection: Setting %s on %s as executable" % (filename, hostname))
-                    stdin, stdout, stderr = ssh.exec_command("chmod a+x %s" % remote_filepath) # Make it executable (a+x in case we run as another user via sudo)
+                    chmod_command = "chmod a+x %s" % remote_filepath # Make it executable (a+x in case we run as another user via sudo)
+                    executeCommand(transport=ssh, command=chmod_command, sudo=sudo, run_as=run_as, password=password)
                     command = remote_filepath # The command to execute is now the uploaded file
                 else: # We're just copying a file (no execute) so let's return it's details
                     command = "ls -l %s" % remote_filepath
             if command:
-                debug("attemptConnection: Executing '%s' on %s" % (command, hostname))
                 command_output = executeCommand(transport=ssh, command=command, sudo=sudo, run_as=run_as, password=password)
             elif command is False and execute is False: # If we're not given anything to execute run the uptime command to make sure that we can execute *something*
-                stdin, stdout, stderr = ssh.exec_command('uptime')
-                command_output = stdout.readlines()
-            if local_filepath and remove:
-                ssh.exec_command("rm -f %s" % remote_filepath) # Clean up/remove the file we just uploaded and executed
+                command_output = executeCommand(transport=ssh, command='uptime', sudo=sudo, run_as=run_as, password=password)
+            if local_filepath and remove: # Clean up/remove the file we just uploaded and executed
+                rm_command = "rm -f %s" % remote_filepath
+                executeCommand(transport=ssh, command=rm_command, sudo=sudo, run_as=run_as, password=password)
+                
             ssh.close()
             command_output = "".join(command_output)
             command_output = normalizeString(command_output)
