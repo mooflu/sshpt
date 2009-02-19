@@ -5,7 +5,7 @@
 # TODO:  Add stderr handling
 
 # Import standard Python modules
-import getpass, threading, Queue, sys, os, re
+import getpass, threading, Queue, sys, os, re, datetime
 from optparse import OptionParser
 from time import sleep
 import traceback
@@ -64,14 +64,18 @@ class OutputThread(threading.Thread):
         sys.exit(0)
 
     def writeOut(self, queueObj):
-        """Write 'text' to stdout (if VERBOSE is True) and to the outfile (if enabled)"""
-        message = "\"%s\",\"%s\",\"%s\"" % (queueObj['host'], queueObj['connection_result'], queueObj['command_output'])
-        verbose(message)
+        """Write relevant queueObj information to stdout (if VERBOSE is True) and to OUTFILE (if it is set)"""
+        if queueObj['command'] == False:
+            queueObj['command'] = "sshpt: sftp.put %s %s:%s" % (queueObj['local_filepath'], queueObj['host'], queueObj['remote_filepath'])
+        if queueObj['sudo'] == True:
+            queueObj['command'] = "sudo -u %s %s)" % (queueObj['run_as'], queueObj['command'])
+        csv_out = "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"" % (queueObj['host'], queueObj['connection_result'], datetime.datetime.now(), queueObj['command'], queueObj['command_output'])
+        verbose(csv_out)
         if OUTFILE is not None:
-            message = "%s\n" % message
-            outlist = open(OUTFILE, 'a')
-            outlist.write(message)
-            outlist.close()
+            csv_out = "%s\n" % csv_out
+            output = open(OUTFILE, 'a')
+            output.write(csv_out)
+            output.close()
 
     def run(self):
         while True:
@@ -241,7 +245,7 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
 def attemptConnection(host, username, password, timeout=30, command=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
     """Attempt to login to 'host' using 'username'/'password' and execute 'command'.
     Will excute the command via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
-    Returns connection_result as a boolean and command_result as a string."""
+    Returns connection_result as a boolean and command_output as a string."""
 
     debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (host, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
     connection_result = True
