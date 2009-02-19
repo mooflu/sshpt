@@ -61,11 +61,8 @@ class OutputThread(threading.Thread):
         sys.exit(0)
 
     def writeOut(self, queueObj):
-        """Write 'text' to stdout (if VERBOSE is True) and to the outfile (if there is one)"""
-        if queueObj['connection_result'] == "SUCCESS":
-            message = "\"%s\",\"%s\",\"%s\"" % (queueObj['hostname'], queueObj['connection_result'], queueObj['command_result'])
-        else:
-            message = "\"%s\",\"%s\"" % (queueObj['hostname'], queueObj['connection_result'])
+        """Write 'text' to stdout (if VERBOSE is True) and to the outfile (if enabled)"""
+        message = "\"%s\",\"%s\",\"%s\"" % (queueObj['hostname'], queueObj['connection_result'], queueObj['command_output'])
         verbose(message)
         if OUTFILE is not None:
             message = "%s\n" % message
@@ -100,7 +97,7 @@ class SSHThread(threading.Thread):
         queueObj['sudo'] - Boolean
         queueObj['run_as'] - String: User to execute the command as (via sudo)
         queueObj['connection_result'] - String: 'SUCCESS'/'FAILED'
-        queueObj['command_result'] - String: Textual output of the command after it was executed
+        queueObj['command_output'] - String: Textual output of the command after it was executed
     """
     def __init__ (self, id, ssh_connect_queue, output_queue):
         threading.Thread.__init__(self, name="SSHThread-%d" % (id,))
@@ -129,13 +126,12 @@ class SSHThread(threading.Thread):
                 sudo = queueObj['sudo']
                 run_as = queueObj['run_as']
                 debug("SSHThread-%s running attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (self.id, hostname, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
-                success = attemptConnection(hostname, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as)
+                success, command_output = attemptConnection(hostname, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as)
                 if success:
                     queueObj['connection_result'] = "SUCCESS"
-                    queueObj['command_result'] = success
                 else:
                     queueObj['connection_result'] = "FAILED"
-                    queueObj['command_result'] = False
+                queueObj['command_output'] = command_output
                 self.output_queue.put(queueObj)
                 self.ssh_connect_queue.task_done()
         except Exception, detail:
@@ -197,10 +193,15 @@ def queueSSHConnection(ssh_connect_queue, hostname, username, password, timeout,
 
 def paramikoConnect(hostname, username, password, timeout):
     """Connects to 'hostname' and returns a Paramiko transport object to use in further communications"""
-    paramiko.util.log_to_file('paramiko.log')
+    # Uncomment this line to turn on Paramiko debugging (good for troubleshooting why some servers report connection failures)
+    #paramiko.util.log_to_file('paramiko.log')
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(hostname, port=22, username=username, password=password, timeout=timeout)
+    try:
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(hostname, port=22, username=username, password=password, timeout=timeout)
+    except Exception, detail:
+        # Connecting failed (for whatever reason)
+        ssh = str(detail)
     return ssh
 
 def sftpPut(transport, local_filepath, remote_filepath):
@@ -226,16 +227,19 @@ def sudoExecute(transport, command, password, run_as='root'):
 def attemptConnection(hostname, username, password, timeout=30, command=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
     """Attempt to login to 'hostname' using 'username'/'password' and execute 'command'.
     Will excute the command via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
-    Returns the command output if everything connected and ran successfully.
-    Returns False if connecting was unsuccessful or an exception was encountered."""
+    Returns the connection result as a boolean and the command result as a string."""
 
     debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (hostname, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
-    command_result = True
-
+    connection_result = True
+    
     # TODO: Add stderr handling
     if hostname != "":
         try:
             ssh = paramikoConnect(hostname, username, password, timeout)
+            if type(ssh) == type(""): # If ssh is a string that means the connection failed and 'ssh' is the detail as to why
+                connection_result = False
+                command_output = ssh
+                return connection_result, command_output
             if local_filepath:
                 sftpPut(ssh, local_filepath, remote_filepath)
                 if execute:
@@ -245,7 +249,7 @@ def attemptConnection(hostname, username, password, timeout=30, command=False, l
                         stdout, stderr = sudoExecute(transport=ssh, command=command, password=password, run_as=run_as)
                     else:
                         stdin, stdout, stderr = ssh.exec_command(remote_filepath)
-                    command_result = stdout.readlines()
+                    command_output = stdout.readlines()
                     if remove:
                         ssh.exec_command("rm -f %s" % remote_filepath)
             if command:
@@ -253,20 +257,21 @@ def attemptConnection(hostname, username, password, timeout=30, command=False, l
                     stdout, stderr = sudoExecute(transport=ssh, command=command, password=password, run_as=run_as)
                 else:
                     stdin, stdout, stderr = ssh.exec_command(command)
-                command_result = stdout.readlines()
+                command_output = stdout.readlines()
             elif command is False and execute is False: # If we're not given anything to execute run the uptime command to make sure that we can execute *something*
                 stdin, stdout, stderr = ssh.exec_command('uptime')
-                command_result = stdout.readlines()
+                command_output = stdout.readlines()
             ssh.close()
-            command_result = "".join(command_result)
-            command_result = normalizeString(command_result)
+            command_output = "".join(command_output)
+            command_output = normalizeString(command_output)
         except Exception, detail:
             # Connection failed
-            traceback.print_exc()
-            print "Exception: %s" % detail
-            command_result = False
+            #traceback.print_exc()
+            #print "Exception: %s" % detail
+            connection_result = False
+            command_output = detail
             ssh.close()
-        return command_result
+        return connection_result, command_output
 
 def sshpt(hostlist, username, password, max_threads=10, timeout=30, command=False, local_filepath=False, remote_filepath="/tmp/", execute=False, remove=False, sudo=False, run_as='root', output_queue=None):
     """Given a list of hosts (hostlist) and credentials (username, password), connect to them all via ssh and optionally:
