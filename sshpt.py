@@ -65,7 +65,7 @@ class OutputThread(threading.Thread):
 
     def writeOut(self, queueObj):
         """Write 'text' to stdout (if VERBOSE is True) and to the outfile (if enabled)"""
-        message = "\"%s\",\"%s\",\"%s\"" % (queueObj['hostname'], queueObj['connection_result'], queueObj['command_output'])
+        message = "\"%s\",\"%s\",\"%s\"" % (queueObj['host'], queueObj['connection_result'], queueObj['command_output'])
         verbose(message)
         if OUTFILE is not None:
             message = "%s\n" % message
@@ -89,7 +89,7 @@ class SSHThread(threading.Thread):
       output_queue          Queue.Queue() to output results
     
     Here's the list of variables that are added to the output queue before it is put():
-        queueObj['hostname']
+        queueObj['host']
         queueObj['username']
         queueObj['password']
         queueObj['command'] - String: Command that was executed
@@ -117,7 +117,7 @@ class SSHThread(threading.Thread):
                 queueObj = self.ssh_connect_queue.get()
                 if queueObj == 'quit':
                     self.quit()
-                hostname = queueObj['hostname']
+                host = queueObj['host']
                 username = queueObj['username']
                 password = queueObj['password']
                 timeout = queueObj['timeout']
@@ -128,8 +128,8 @@ class SSHThread(threading.Thread):
                 remove = queueObj['remove']
                 sudo = queueObj['sudo']
                 run_as = queueObj['run_as']
-                debug("SSHThread-%s running attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (self.id, hostname, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
-                success, command_output = attemptConnection(hostname, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as)
+                debug("SSHThread-%s running attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (self.id, host, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
+                success, command_output = attemptConnection(host, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as)
                 if success:
                     queueObj['connection_result'] = "SUCCESS"
                 else:
@@ -177,10 +177,10 @@ def stopSSHQueue():
             debug("...stopped")
     return True
 
-def queueSSHConnection(ssh_connect_queue, hostname, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as):
+def queueSSHConnection(ssh_connect_queue, host, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as):
     """Add files to the SSH Queue (ssh_connect_queue)"""
     queueObj = {}
-    queueObj['hostname'] = hostname
+    queueObj['host'] = host
     queueObj['username'] = username
     queueObj['password'] = password
     queueObj['timeout'] = timeout
@@ -194,14 +194,14 @@ def queueSSHConnection(ssh_connect_queue, hostname, username, password, timeout,
     ssh_connect_queue.put(queueObj)
     return True
 
-def paramikoConnect(hostname, username, password, timeout):
-    """Connects to 'hostname' and returns a Paramiko transport object to use in further communications"""
+def paramikoConnect(host, username, password, timeout):
+    """Connects to 'host' and returns a Paramiko transport object to use in further communications"""
     # Uncomment this line to turn on Paramiko debugging (good for troubleshooting why some servers report connection failures)
     #paramiko.util.log_to_file('paramiko.log')
     ssh = paramiko.SSHClient()
     try:
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(hostname, port=22, username=username, password=password, timeout=timeout)
+        ssh.connect(host, port=22, username=username, password=password, timeout=timeout)
     except Exception, detail:
         # Connecting failed (for whatever reason)
         ssh = str(detail)
@@ -220,7 +220,7 @@ def sftpPut(transport, local_filepath, remote_filepath):
 def sudoExecute(transport, command, password, run_as='root'):
     """Executes the given command via sudo as the specified user (run_as) using the given Paramiko transport object.
     Returns stdout, stderr (after command execution)"""
-    debug("sudoExecute: Running 'sudo %s' as '%s'" % (command, run_as))
+    debug("sudoExecute: Running 'sudo %s' as '%s' on %s" % (command, run_as, transport.get_host_keys().keys()[0]))
     stdin, stdout, stderr = transport.exec_command("sudo -S -u %s %s" % (run_as, command))
     if stdout.channel.closed is False: # If stdout is still open then sudo is asking us for a password
         stdin.write('%s\n' % password)
@@ -232,23 +232,23 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
     Returns stdout (after command execution)"""
     if sudo:
         stdout, stderr = sudoExecute(transport=transport, command=command, password=password, run_as=run_as)
-    else:
-        debug("executeCommand: Running '%s'" % command)
+    else: # Note: It seems transport.get_host_keys().keys()[0]) is how you get the hostname/IP out of a Paramiko transport object
+        debug("executeCommand: Running '%s' on %s" % (command, transport.get_host_keys().keys()[0])) 
         stdin, stdout, stderr = transport.exec_command(command)
     command_output = stdout.readlines()
     return command_output
     
-def attemptConnection(hostname, username, password, timeout=30, command=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
-    """Attempt to login to 'hostname' using 'username'/'password' and execute 'command'.
+def attemptConnection(host, username, password, timeout=30, command=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
+    """Attempt to login to 'host' using 'username'/'password' and execute 'command'.
     Will excute the command via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
     Returns connection_result as a boolean and command_result as a string."""
 
-    debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (hostname, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
+    debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (host, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
     connection_result = True
     
-    if hostname != "":
+    if host != "":
         try:
-            ssh = paramikoConnect(hostname, username, password, timeout)
+            ssh = paramikoConnect(host, username, password, timeout)
             if type(ssh) == type(""): # If ssh is a string that means the connection failed and 'ssh' is the details as to why
                 connection_result = False
                 command_output = ssh
@@ -256,7 +256,7 @@ def attemptConnection(hostname, username, password, timeout=30, command=False, l
             if local_filepath:
                 if sudo: # SFTP the file to a temporary location then copy/move it to the final destination via sudo
                     sftpPut(ssh, local_filepath, '/tmp/sshpt_temp')
-                    copy_command = "cp -f /tmp/sshpt_temp /tmp/sshpt_temp2" # Copy the file to another temp location so it gets the sudo user's default ownership
+                    copy_command = "cp -f /tmp/sshpt_temp /tmp/sshpt_temp2" # Copy the file to another temp location so it gets the sudo user's default file ownership and permissions
                     executeCommand(transport=ssh, command=copy_command, sudo=sudo, run_as=run_as, password=password)
                     move_command = "mv -f /tmp/sshpt_temp2 %s" % remote_filepath # Move the file to its final destination
                     executeCommand(transport=ssh, command=move_command, sudo=sudo, run_as=run_as, password=password)
@@ -403,9 +403,9 @@ def main():
     hostlist_list = []
 
     try: # This wierd little sequence of loops allows us to hit control-C in the middle of program execution and get immediate results
-        for hostname in hostlist.split("\n"): # Turn the hostlist into an actual list
-            if hostname != "":
-                hostlist_list.append(hostname)
+        for host in hostlist.split("\n"): # Turn the hostlist into an actual list
+            if host != "":
+                hostlist_list.append(host)
         sshpt(hostlist_list, username, password, max_threads, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as)
     except KeyboardInterrupt:
         print 'caught KeyboardInterrupt, exiting...'
