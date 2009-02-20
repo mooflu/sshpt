@@ -8,7 +8,6 @@
 import getpass, threading, Queue, sys, os, re, datetime
 from optparse import OptionParser
 from time import sleep
-import traceback
 
 # Import non-standard stuff below
 try:
@@ -19,7 +18,7 @@ except:
     
 __version__ = '1.0.4'
 __license__ = "GNU General Public License (GPL) Version 3"
-__version_info__ = (1, 0, 0)
+__version_info__ = (1, 0, 4)
 __author__ = 'Dan McDougall <YouKnowWho@YouKnowWhat.com>'
 
 __doc__ = \
@@ -287,7 +286,6 @@ def attemptConnection(host, username, password, timeout=30, command=False, local
             command_output = normalizeString(command_output)
         except Exception, detail:
             # Connection failed
-            #traceback.print_exc()
             #print "Exception: %s" % detail
             connection_result = False
             command_output = detail
