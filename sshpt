@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # TODO:  Add the ability to pass command line arguments to uploaded and executed files
+# TODO:  Fix newline output (since adding multiple command capability)
 # TODO:  Add stderr handling
 
 # Import standard Python modules
@@ -64,11 +65,24 @@ class OutputThread(threading.Thread):
 
     def writeOut(self, queueObj):
         """Write relevant queueObj information to stdout (if VERBOSE is True) and to OUTFILE (if it is set)"""
-        if queueObj['command'] == False:
-            queueObj['command'] = "sshpt: sftp.put %s %s:%s" % (queueObj['local_filepath'], queueObj['host'], queueObj['remote_filepath'])
-        if queueObj['sudo'] == True:
-            queueObj['command'] = "sudo -u %s %s)" % (queueObj['run_as'], queueObj['command'])
-        csv_out = "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"" % (queueObj['host'], queueObj['connection_result'], datetime.datetime.now(), queueObj['command'], queueObj['command_output'])
+        if queueObj['commands'] == False:
+            queueObj['commands'] = "sshpt: sftp.put %s %s:%s" % (queueObj['local_filepath'], queueObj['host'], queueObj['remote_filepath'])
+        elif queueObj['sudo'] is False:
+            if len(queueObj['commands']) > 1: # Only prepend 'index: ' if we were passed more than one command
+                queueObj['commands'] = "\n".join(["%s: %s" % (index, command) for index, command in enumerate(queueObj['commands'])])
+            else:
+                queueObj['commands'] = "".join(queueObj['commands'])
+        else:
+            if len(queueObj['commands']) > 1: # Only prepend 'index: ' if we were passed more than one command
+                queueObj['commands'] = "\n".join(["%s: sudo -u %s %s" % (index, queueObj['run_as'], command) for index, command in enumerate(queueObj['commands'])])
+            else:
+                queueObj['commands'] = "sudo -u %s" % "".join(queueObj['commands'])
+
+        if len(queueObj['command_output']) > 1: # Only prepend 'index: ' if we were passed more than one command
+            queueObj['command_output'] = "\n".join(["%s: %s" % (index, command) for index, command in enumerate(queueObj['command_output'])])
+        else:
+            queueObj['command_output'] = "\n".join(queueObj['command_output'])
+        csv_out = "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"" % (queueObj['host'], queueObj['connection_result'], datetime.datetime.now(), queueObj['commands'], queueObj['command_output'])
         verbose(csv_out)
         if OUTFILE is not None:
             csv_out = "%s\n" % csv_out
@@ -85,7 +99,7 @@ class OutputThread(threading.Thread):
             self.output_queue.task_done()
 
 class SSHThread(threading.Thread):
-    """Connects to a host and optionally runs a command or copies a file over SFTP.
+    """Connects to a host and optionally runs commands or copies a file over SFTP.
     Must be instanciated with:
       id                    A thread ID
       ssh_connect_queue     Queue.Queue() for receiving orders
@@ -95,15 +109,15 @@ class SSHThread(threading.Thread):
         queueObj['host']
         queueObj['username']
         queueObj['password']
-        queueObj['command'] - String: Command that was executed
+        queueObj['commands'] - List: Commands that were executed
         queueObj['local_filepath'] - String: SFTP local file path
         queueObj['remote_filepath'] - String: SFTP file destination path
         queueObj['execute'] - Boolean
         queueObj['remove'] - Boolean
         queueObj['sudo'] - Boolean
-        queueObj['run_as'] - String: User to execute the command as (via sudo)
+        queueObj['run_as'] - String: User to execute commands as (via sudo)
         queueObj['connection_result'] - String: 'SUCCESS'/'FAILED'
-        queueObj['command_output'] - String: Textual output of the command after it was executed
+        queueObj['command_output'] - String: Textual output of commands after execution
     """
     def __init__ (self, id, ssh_connect_queue, output_queue):
         threading.Thread.__init__(self, name="SSHThread-%d" % (id,))
@@ -124,15 +138,15 @@ class SSHThread(threading.Thread):
                 username = queueObj['username']
                 password = queueObj['password']
                 timeout = queueObj['timeout']
-                command = queueObj['command']
+                commands = queueObj['commands']
                 local_filepath = queueObj['local_filepath']
                 remote_filepath = queueObj['remote_filepath']
                 execute = queueObj['execute']
                 remove = queueObj['remove']
                 sudo = queueObj['sudo']
                 run_as = queueObj['run_as']
-                debug("SSHThread-%s running attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (self.id, host, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
-                success, command_output = attemptConnection(host, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as)
+                debug("SSHThread-%s running attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (self.id, host, username, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as))
+                success, command_output = attemptConnection(host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as)
                 if success:
                     queueObj['connection_result'] = "SUCCESS"
                 else:
@@ -180,14 +194,14 @@ def stopSSHQueue():
             debug("...stopped")
     return True
 
-def queueSSHConnection(ssh_connect_queue, host, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as):
+def queueSSHConnection(ssh_connect_queue, host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as):
     """Add files to the SSH Queue (ssh_connect_queue)"""
     queueObj = {}
     queueObj['host'] = host
     queueObj['username'] = username
     queueObj['password'] = password
     queueObj['timeout'] = timeout
-    queueObj['command'] = command
+    queueObj['commands'] = commands
     queueObj['local_filepath'] = local_filepath
     queueObj['remote_filepath'] = remote_filepath
     queueObj['execute'] = execute
@@ -239,14 +253,15 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
         debug("executeCommand: Running '%s' on %s" % (command, transport.get_host_keys().keys()[0])) 
         stdin, stdout, stderr = transport.exec_command(command)
     command_output = stdout.readlines()
+    command_output = "".join(command_output)
     return command_output
     
-def attemptConnection(host, username, password, timeout=30, command=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
-    """Attempt to login to 'host' using 'username'/'password' and execute 'command'.
-    Will excute the command via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
+def attemptConnection(host, username, password, timeout=30, commands=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
+    """Attempt to login to 'host' using 'username'/'password' and execute 'commands'.
+    Will excute commands via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
     Returns connection_result as a boolean and command_output as a string."""
 
-    debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (host, username, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as))
+    debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (host, username, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as))
     connection_result = True
     
     if host != "":
@@ -256,6 +271,7 @@ def attemptConnection(host, username, password, timeout=30, command=False, local
                 connection_result = False
                 command_output = ssh
                 return connection_result, command_output
+            command_output = []
             if local_filepath:
                 if sudo: # SFTP the file to a temporary location then copy/move it to the final destination via sudo
                     sftpPut(ssh, local_filepath, '/tmp/sshpt_temp')
@@ -272,18 +288,21 @@ def attemptConnection(host, username, password, timeout=30, command=False, local
                     executeCommand(transport=ssh, command=chmod_command, sudo=sudo, run_as=run_as, password=password)
                     command = remote_filepath # The command to execute is now the uploaded file
                 else: # We're just copying a file (no execute) so let's return it's details
-                    command = "ls -l %s" % remote_filepath
-            if command:
-                command_output = executeCommand(transport=ssh, command=command, sudo=sudo, run_as=run_as, password=password)
-            elif command is False and execute is False: # If we're not given anything to execute run the uptime command to make sure that we can execute *something*
+                    commands = ["ls -l %s" % remote_filepath,]
+            if commands:
+                for command in commands: # This makes a list of lists (each line of output in command_output is it's own item in the list)
+                    command_output.append(executeCommand(transport=ssh, command=command, sudo=sudo, run_as=run_as, password=password))
+            elif commands is False and execute is False: # If we're not given anything to execute run the uptime command to make sure that we can execute *something*
                 command_output = executeCommand(transport=ssh, command='uptime', sudo=sudo, run_as=run_as, password=password)
             if local_filepath and remove: # Clean up/remove the file we just uploaded and executed
                 rm_command = "rm -f %s" % remote_filepath
                 executeCommand(transport=ssh, command=rm_command, sudo=sudo, run_as=run_as, password=password)
                 
             ssh.close()
-            command_output = "".join(command_output)
-            command_output = normalizeString(command_output)
+            command_count = 0
+            for output in command_output: # Clean up the command output
+                command_output[command_count] = normalizeString(output)
+                command_count = command_count + 1
         except Exception, detail:
             # Connection failed
             #print "Exception: %s" % detail
@@ -292,11 +311,11 @@ def attemptConnection(host, username, password, timeout=30, command=False, local
             ssh.close()
         return connection_result, command_output
 
-def sshpt(hostlist, username, password, max_threads=10, timeout=30, command=False, local_filepath=False, remote_filepath="/tmp/", execute=False, remove=False, sudo=False, run_as='root', output_queue=None):
+def sshpt(hostlist, username, password, max_threads=10, timeout=30, commands=False, local_filepath=False, remote_filepath="/tmp/", execute=False, remove=False, sudo=False, run_as='root', output_queue=None):
     """Given a list of hosts (hostlist) and credentials (username, password), connect to them all via ssh and optionally:
-        * Execute a command (command) on the host.
+        * Execute 'commands' on the host.
         * SFTP a file to the host (local_filepath, remote_filepath) and optionally, execute it (execute).
-        * Execute said command or file via sudo as root or another user (run_as).
+        * Execute said commands or file via sudo as root or another user (run_as).
     
     If you're importing this program as a module you can pass this function your own Queue (output_queue) to be used for writing results via your own class (for example, to record results into a database or a different file format).  Alternatively you can just override the writeOut() method in OutputThread (it's up to you =)."""
 
@@ -309,7 +328,7 @@ def sshpt(hostlist, username, password, max_threads=10, timeout=30, command=Fals
     while len(hostlist) != 0: # Only add items to the ssh_connect_queue if there are available threads to take them.
         for host in hostlist:
             if ssh_connect_queue.qsize() <= max_threads:
-                queueSSHConnection(ssh_connect_queue, host, username, password, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as)
+                queueSSHConnection(ssh_connect_queue, host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as)
                 hostlist.remove(host)
         sleep(1)
     ssh_connect_queue.join() # Wait until all jobs are done before exiting
@@ -324,8 +343,9 @@ def main():
     global DEBUG
 
     # Grab command line arguments and the command to run (if any)
-    usage = "usage: %prog [options] [command] [arguments...]"
+    usage = 'usage: %prog [options] "[command1]" "[command2]" ...'
     parser = OptionParser(usage=usage, version=__version__)
+    parser.disable_interspersed_args()
     parser.add_option("-f", "--file", dest="hostfile", default=None, help="Location of the file containing the host list.", metavar="<file>")
     parser.add_option("-o", "--outfile", dest="OUTFILE", default=None, help="Location of the file where the results will be saved.", metavar="<file>")
     parser.add_option("-a", "--authfile", dest="authfile", default=None, help="Location of the file containing the credentials to be used for connections (format is \"username:password\").", metavar="<file>")
@@ -351,12 +371,12 @@ def main():
         parser.print_help()
         sys.exit(2)
 
-    command = False
+    commands = False
     return_code = 0
 
-    # Assume anything passed to us beyond the command line switches is the command to be executed
+    ## Assume anything passed to us beyond the command line switches are commands to be executed
     if len(args) > 0:
-        command = " ".join(args)
+        commands = args
 
     # Assign the options to more readable variables
     username = options.username
@@ -383,8 +403,8 @@ def main():
         print "Please don't use quite mode (-q) without an output file (-o <file>)."
         sys.exit(2)
 
-    if local_filepath is not None and command is not False:
-        print "Error: You can either run a command or execute a file.  Not both."
+    if local_filepath is not None and commands is not False:
+        print "Error: You can either run commands or execute a file.  Not both."
         sys.exit(2)
 
     # Read in the host list to check
@@ -408,7 +428,7 @@ def main():
         for host in hostlist.split("\n"): # Turn the hostlist into an actual list
             if host != "":
                 hostlist_list.append(host)
-        sshpt(hostlist_list, username, password, max_threads, timeout, command, local_filepath, remote_filepath, execute, remove, sudo, run_as)
+        sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as)
     except KeyboardInterrupt:
         print 'caught KeyboardInterrupt, exiting...'
         return_code = 1 # Return code should be 1 if the user issues a SIGINT (control-C)
