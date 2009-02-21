@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 # TODO:  Add the ability to pass command line arguments to uploaded and executed files
-# TODO:  Fix newline output (since adding multiple command capability)
 # TODO:  Add stderr handling
 
 # Import standard Python modules
