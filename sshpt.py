@@ -1,5 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+#
+#       sshpt.py
+#
+#       Copyright 2009 Dan McDougall <YouKnowWho@YouKnowWhat.com>
+#
+#       This program is free software; you can redistribute it and/or modify
+#       it under the terms of the GNU General Public License as published by
+#       the Free Software Foundation; Version 3 of the License
+#
+#       This program is distributed in the hope that it will be useful,
+#       but WITHOUT ANY WARRANTY; without even the implied warranty of
+#       MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#       GNU General Public License for more details.
+#
+#       You should have received a copy of the GNU General Public License
+#       along with this program; if not, the license can be downloaded here:
+#
+#       http://www.gnu.org/licenses/gpl.html
 
 # TODO:  Add the ability to pass command line arguments to uploaded and executed files
 # TODO:  Add stderr handling
@@ -13,9 +31,10 @@ from time import sleep
 try:
     import paramiko
 except:
-    print("ERROR: paramiko is a required module. Please install it")
+    print("ERROR: Paramiko is a required module. It must be installed before running this program.")
+    print("Download it here: http://www.lag.net/paramiko/")
     exit(1)
-    
+
 __version__ = '1.0.4'
 __license__ = "GNU General Public License (GPL) Version 3"
 __version_info__ = (1, 0, 4)
@@ -45,7 +64,7 @@ def debug(s):
     """Prints string, 's' if global, DEBUG is set to True"""
     if DEBUG:
         print s
-    
+
 def normalizeString(string):
     """Removes/fixes leading/trailing newlines/whitespace and escapes double quotes with double quotes (to comply with CSV format)"""
     string = re.sub(r'(\r\n|\r|\n)', '\n', string) # Convert all newlines to unix newlines
@@ -103,7 +122,7 @@ class SSHThread(threading.Thread):
       id                    A thread ID
       ssh_connect_queue     Queue.Queue() for receiving orders
       output_queue          Queue.Queue() to output results
-    
+
     Here's the list of variables that are added to the output queue before it is put():
         queueObj['host']
         queueObj['username']
@@ -249,12 +268,12 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
     if sudo:
         stdout, stderr = sudoExecute(transport=transport, command=command, password=password, run_as=run_as)
     else: # Note: It seems transport.get_host_keys().keys()[0]) is how you get the hostname/IP out of a Paramiko transport object
-        debug("executeCommand: Running '%s' on %s" % (command, transport.get_host_keys().keys()[0])) 
+        debug("executeCommand: Running '%s' on %s" % (command, transport.get_host_keys().keys()[0]))
         stdin, stdout, stderr = transport.exec_command(command)
     command_output = stdout.readlines()
     command_output = "".join(command_output)
     return command_output
-    
+
 def attemptConnection(host, username, password, timeout=30, commands=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
     """Attempt to login to 'host' using 'username'/'password' and execute 'commands'.
     Will excute commands via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
@@ -262,7 +281,7 @@ def attemptConnection(host, username, password, timeout=30, commands=False, loca
 
     debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (host, username, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as))
     connection_result = True
-    
+
     if host != "":
         try:
             ssh = paramikoConnect(host, username, password, timeout)
@@ -296,7 +315,7 @@ def attemptConnection(host, username, password, timeout=30, commands=False, loca
             if local_filepath and remove: # Clean up/remove the file we just uploaded and executed
                 rm_command = "rm -f %s" % remote_filepath
                 executeCommand(transport=ssh, command=rm_command, sudo=sudo, run_as=run_as, password=password)
-                
+
             ssh.close()
             command_count = 0
             for output in command_output: # Clean up the command output
@@ -315,7 +334,7 @@ def sshpt(hostlist, username, password, max_threads=10, timeout=30, commands=Fal
         * Execute 'commands' on the host.
         * SFTP a file to the host (local_filepath, remote_filepath) and optionally, execute it (execute).
         * Execute said commands or file via sudo as root or another user (run_as).
-    
+
     If you're importing this program as a module you can pass this function your own Queue (output_queue) to be used for writing results via your own class (for example, to record results into a database or a different file format).  Alternatively you can just override the writeOut() method in OutputThread (it's up to you =)."""
 
     if output_queue is None:
@@ -323,7 +342,7 @@ def sshpt(hostlist, username, password, max_threads=10, timeout=30, commands=Fal
     # Start up the Output and SSH threads
     debug("Starting %s connection threads..." % max_threads)
     ssh_connect_queue = startSSHQueue(output_queue, max_threads)
-    
+
     while len(hostlist) != 0: # Only add items to the ssh_connect_queue if there are available threads to take them.
         for host in hostlist:
             if ssh_connect_queue.qsize() <= max_threads:
