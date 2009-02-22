@@ -19,28 +19,11 @@
 #
 #       http://www.gnu.org/licenses/gpl.html
 
-# TODO:  Add the ability to pass command line arguments to uploaded and executed files
+# TODO:  Add the ability to pass command line arguments to uploaded/executed files
 # TODO:  Add stderr handling
+# TODO:  Add ability to specify the ownership and permissions of uploaded files (when sudo is used)
 
-# Import standard Python modules
-import getpass, threading, Queue, sys, os, re, datetime
-from optparse import OptionParser
-from time import sleep
-
-# Import non-standard stuff below
-try:
-    import paramiko
-except:
-    print("ERROR: Paramiko is a required module. It must be installed before running this program.")
-    print("Download it here: http://www.lag.net/paramiko/")
-    exit(1)
-
-__version__ = '1.0.4'
-__license__ = "GNU General Public License (GPL) Version 3"
-__version_info__ = (1, 0, 4)
-__author__ = 'Dan McDougall <YouKnowWho@YouKnowWhat.com>'
-
-__doc__ = \
+# Docstring:
 """
 SSH Power Tool (SSHPT): This program will attempt to login via SSH to a list of servers supplied in a text file (one host per line).  It supports multithreading and will perform simultaneous connection attempts to save time (10 by default).  Results are output to stdout in CSV format and optionally, to an outfile (-o).
 
@@ -49,21 +32,24 @@ If no username and/or password are provided as command line arguments or via a c
 This program is meant for situations where shared keys are not an option.  If all your hosts are configured with shared keys for passwordless logins you don't need the SSH Power Tool.
 """
 
-# Setup some global defaults
-VERBOSE = True
-OUTFILE = None
-DEBUG = False
+# Meta
+__version__ = '1.1.0'
+__license__ = "GNU General Public License (GPL) Version 3"
+__version_info__ = (1, 1, 0)
+__author__ = 'Dan McDougall <YouKnowWho@YouKnowWhat.com>'
 
+# Import built-in Python modules
+import getpass, threading, Queue, sys, os, re, datetime
+from optparse import OptionParser
+from time import sleep
 
-def verbose(s):
-    """Prints string, 's' if global, VERBOSE is set to True"""
-    if VERBOSE:
-        print s
-
-def debug(s):
-    """Prints string, 's' if global, DEBUG is set to True"""
-    if DEBUG:
-        print s
+# Import 3rd party modules
+try:
+    import paramiko
+except:
+    print("ERROR: The Paramiko module required to use sshpt.")
+    print("Download it here: http://www.lag.net/paramiko/")
+    exit(1)
 
 def normalizeString(string):
     """Removes/fixes leading/trailing newlines/whitespace and escapes double quotes with double quotes (to comply with CSV format)"""
@@ -71,18 +57,33 @@ def normalizeString(string):
     string = string.strip() # Remove leading/trailing whitespace/blank lines
     srting = re.sub(r'(")', '""', string) # Convert double quotes to double double quotes (e.g. 'foo "bar" blah' becomes 'foo ""bar"" blah')
     return string
-
-class OutputThread(threading.Thread):
-    """This thread is here to prevent SSHThreads from simultaneously writing to the same file and mucking it all up.  Essentially, it allows the program to write results to an outfile as they come in instead of all at once when the program is finished.  This also prevents a 'kill -9' from destroying report resuls and also lets you do a 'tail -f <outfile>' to watch results in real-time."""
-    def __init__(self, output_queue):
-        threading.Thread.__init__(self, name="OutputThread")
-        self.output_queue = output_queue
-
+    
+class GenericThread(threading.Thread):
+    """A baseline thread that includes the functions we want for all our threads so we don't have to duplicate code."""
     def quit(self):
         sys.exit(0)
 
+class OutputThread(GenericThread):
+    """This thread is here to prevent SSHThreads from simultaneously writing to the same file and mucking it all up.  Essentially, it allows sshpt to write results to an outfile as they come in instead of all at once when the program is finished.  This also prevents a 'kill -9' from destroying report resuls and also lets you do a 'tail -f <outfile>' to watch results in real-time.
+    
+        output_queue: Queue.Queue(): The queue to use for incoming messages.
+        verbose - Boolean: Whether or not we should output to stdout.
+        outfile - String: Path to the file where we'll store results.
+    """
+    def __init__(self, output_queue, verbose=True, outfile=None):
+        """Name ourselves and assign the variables we were instanciated with."""
+        threading.Thread.__init__(self, name="OutputThread")
+        self.output_queue = output_queue
+        self.verbose = verbose
+        self.outfile = outfile
+
+    def printToStdout(self, string):
+        """Prints 'string' if self.verbose is set to True"""
+        if self.verbose == True:
+            print string
+
     def writeOut(self, queueObj):
-        """Write relevant queueObj information to stdout (if VERBOSE is True) and to OUTFILE (if it is set)"""
+        """Write relevant queueObj information to stdout and/or to the outfile (if one is set)"""
         if queueObj['commands'] == False:
             queueObj['commands'] = "sshpt: sftp.put %s %s:%s" % (queueObj['local_filepath'], queueObj['host'], queueObj['remote_filepath'])
         elif queueObj['sudo'] is False:
@@ -95,16 +96,15 @@ class OutputThread(threading.Thread):
                 queueObj['commands'] = "\n".join(["%s: sudo -u %s %s" % (index, queueObj['run_as'], command) for index, command in enumerate(queueObj['commands'])])
             else:
                 queueObj['commands'] = "sudo -u %s" % "".join(queueObj['commands'])
-
         if len(queueObj['command_output']) > 1: # Only prepend 'index: ' if we were passed more than one command
             queueObj['command_output'] = "\n".join(["%s: %s" % (index, command) for index, command in enumerate(queueObj['command_output'])])
         else:
             queueObj['command_output'] = "\n".join(queueObj['command_output'])
         csv_out = "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"" % (queueObj['host'], queueObj['connection_result'], datetime.datetime.now(), queueObj['commands'], queueObj['command_output'])
-        verbose(csv_out)
-        if OUTFILE is not None:
+        self.printToStdout(csv_out)
+        if self.outfile is not None:
             csv_out = "%s\n" % csv_out
-            output = open(OUTFILE, 'a')
+            output = open(self.outfile, 'a')
             output.write(csv_out)
             output.close()
 
@@ -116,7 +116,7 @@ class OutputThread(threading.Thread):
             self.writeOut(queueObj)
             self.output_queue.task_done()
 
-class SSHThread(threading.Thread):
+class SSHThread(GenericThread):
     """Connects to a host and optionally runs commands or copies a file over SFTP.
     Must be instanciated with:
       id                    A thread ID
@@ -143,15 +143,14 @@ class SSHThread(threading.Thread):
         self.output_queue = output_queue
         self.id = id
 
-    def quit(self):
-        sys.exit(0)
-
     def run (self):
         try:
             while True:
                 queueObj = self.ssh_connect_queue.get()
                 if queueObj == 'quit':
                     self.quit()
+                    
+                # These variable assignments are just here for readability further down
                 host = queueObj['host']
                 username = queueObj['username']
                 password = queueObj['password']
@@ -163,7 +162,7 @@ class SSHThread(threading.Thread):
                 remove = queueObj['remove']
                 sudo = queueObj['sudo']
                 run_as = queueObj['run_as']
-                debug("SSHThread-%s running attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (self.id, host, username, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as))
+                
                 success, command_output = attemptConnection(host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as)
                 if success:
                     queueObj['connection_result'] = "SUCCESS"
@@ -176,10 +175,10 @@ class SSHThread(threading.Thread):
             print detail
             self.quit()
 
-def startOutputThread():
+def startOutputThread(verbose, outfile):
     """Starts up the OutputThread (which is used by SSHThreads to print/write out results)."""
     output_queue = Queue.Queue()
-    output_thread = OutputThread(output_queue)
+    output_thread = OutputThread(output_queue, verbose, outfile)
     output_thread.setDaemon(True)
     output_thread.start()
     return output_queue
@@ -188,9 +187,7 @@ def stopOutputThread():
     """Shuts down the OutputThread"""
     for t in threading.enumerate():
         if t.getName().startswith('OutputThread'):
-            debug("stopping %s..." % t.getName())
             t.quit()
-            debug("...stopped")
     return True
 
 def startSSHQueue(output_queue, max_threads):
@@ -200,16 +197,13 @@ def startSSHQueue(output_queue, max_threads):
         ssh_thread = SSHThread(thread_num, ssh_connect_queue, output_queue)
         ssh_thread.setDaemon(True)
         ssh_thread.start()
-        debug("SSHThread-%s spawned" % thread_num)
     return ssh_connect_queue
 
 def stopSSHQueue():
     """Shut down the SSH Threads"""
     for t in threading.enumerate():
         if t.getName().startswith('SSHThread'):
-            debug("stopping %s..." % t.getName())
             t.quit()
-            debug("...stopped")
     return True
 
 def queueSSHConnection(ssh_connect_queue, host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as):
@@ -244,18 +238,15 @@ def paramikoConnect(host, username, password, timeout):
 
 def sftpPut(transport, local_filepath, remote_filepath):
     """Uses SFTP to transfer a local file (local_filepath) to a remote server at the specified path (remote_filepath) using the given Paramiko transport object."""
-    debug("Opening an SFTP channel...")
     sftp = transport.open_sftp()
     filename = os.path.basename(local_filepath)
     if filename not in remote_filepath:
         remote_filepath = os.path.normpath(remote_filepath + "/")
-    debug("SFTP'ing %s to the server as %s" % (local_filepath, remote_filepath))
     sftp.put(local_filepath, remote_filepath)
 
 def sudoExecute(transport, command, password, run_as='root'):
     """Executes the given command via sudo as the specified user (run_as) using the given Paramiko transport object.
     Returns stdout, stderr (after command execution)"""
-    debug("sudoExecute: Running 'sudo %s' as '%s' on %s" % (command, run_as, transport.get_host_keys().keys()[0]))
     stdin, stdout, stderr = transport.exec_command("sudo -S -u %s %s" % (run_as, command))
     if stdout.channel.closed is False: # If stdout is still open then sudo is asking us for a password
         stdin.write('%s\n' % password)
@@ -265,22 +256,34 @@ def sudoExecute(transport, command, password, run_as='root'):
 def executeCommand(transport, command, sudo=False, run_as='root', password=None):
     """Executes the given command via the specified Paramiko transport object.  Will execute as sudo if passed the necessary variables (sudo=True, password, run_as).
     Returns stdout (after command execution)"""
+    host = transport.get_host_keys().keys()[0]
     if sudo:
         stdout, stderr = sudoExecute(transport=transport, command=command, password=password, run_as=run_as)
-    else: # Note: It seems transport.get_host_keys().keys()[0]) is how you get the hostname/IP out of a Paramiko transport object
-        debug("executeCommand: Running '%s' on %s" % (command, transport.get_host_keys().keys()[0]))
+    else:
         stdin, stdout, stderr = transport.exec_command(command)
     command_output = stdout.readlines()
     command_output = "".join(command_output)
     return command_output
 
-def attemptConnection(host, username, password, timeout=30, commands=False, local_filepath=False, remote_filepath='/tmp/', execute=False, remove=False, sudo=False, run_as='root'):
+def attemptConnection(
+        host,
+        username,
+        password,
+        timeout=30, # Connection timeout
+        commands=False, # Either False for no commnads or a list
+        local_filepath=False, # Local path of the file to SFTP
+        remote_filepath='/tmp/', # Destination path where the file should end up on the host
+        execute=False, # Whether or not the SFTP'd file should be executed after it is uploaded
+        remove=False, # Whether or not the SFTP'd file should be removed after execution
+        sudo=False, # Whether or not sudo should be used for commands and file operations
+        run_as='root' # User to become when using sudo
+        ):
     """Attempt to login to 'host' using 'username'/'password' and execute 'commands'.
     Will excute commands via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
     Returns connection_result as a boolean and command_output as a string."""
 
-    debug("attemptConnection(%s, %s, <password>, %s, %s, %s, %s, %s, %s, %s, %s)" % (host, username, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as))
     connection_result = True
+    command_output = []
 
     if host != "":
         try:
@@ -300,11 +303,14 @@ def attemptConnection(host, username, password, timeout=30, commands=False, loca
                     cleanup_command = "rm -f /tmp/sshpt_temp" # Clean up after ourselves
                     executeCommand(transport=ssh, command=cleanup_command, sudo=sudo, run_as=run_as, password=password)
                 else:
-                    sftpPut(ssh, local_filepath, remote_filepath)
+                    try:
+                        sftpPut(ssh, local_filepath, remote_filepath)
+                    except IOError, details: # i.e. permission denied
+                        command_output.append(str(details)) # Make sure the error is included in the command output
                 if execute:
                     chmod_command = "chmod a+x %s" % remote_filepath # Make it executable (a+x in case we run as another user via sudo)
                     executeCommand(transport=ssh, command=chmod_command, sudo=sudo, run_as=run_as, password=password)
-                    command = remote_filepath # The command to execute is now the uploaded file
+                    commands = [remote_filepath,] # The command to execute is now the uploaded file
                 else: # We're just copying a file (no execute) so let's return it's details
                     commands = ["ls -l %s" % remote_filepath,]
             if commands:
@@ -329,18 +335,33 @@ def attemptConnection(host, username, password, timeout=30, commands=False, loca
             ssh.close()
         return connection_result, command_output
 
-def sshpt(hostlist, username, password, max_threads=10, timeout=30, commands=False, local_filepath=False, remote_filepath="/tmp/", execute=False, remove=False, sudo=False, run_as='root', output_queue=None):
+def sshpt(
+        hostlist, # List - Hosts to connect to
+        username,
+        password,
+        max_threads=10, # Maximum number of simultaneous connection attempts
+        timeout=30, # Connection timeout
+        commands=False, # List - Commands to execute on hosts (if False nothing will be executed)
+        local_filepath=False, # Local path of the file to SFTP
+        remote_filepath="/tmp/", # Destination path where the file should end up on the host
+        execute=False, # Whether or not the SFTP'd file should be executed after it is uploaded
+        remove=False, # Whether or not the SFTP'd file should be removed after execution
+        sudo=False, # Whether or not sudo should be used for commands and file operations
+        run_as='root', # User to become when using sudo
+        verbose=True, # Whether or not we should output connection results to stdout
+        outfile=None, # Path to the file where we want to store connection results
+        output_queue=None # Queue.Queue() where connection results should be put().  If none is given it will use the OutputThread default (output_queue)
+        ):
     """Given a list of hosts (hostlist) and credentials (username, password), connect to them all via ssh and optionally:
         * Execute 'commands' on the host.
         * SFTP a file to the host (local_filepath, remote_filepath) and optionally, execute it (execute).
         * Execute said commands or file via sudo as root or another user (run_as).
 
-    If you're importing this program as a module you can pass this function your own Queue (output_queue) to be used for writing results via your own class (for example, to record results into a database or a different file format).  Alternatively you can just override the writeOut() method in OutputThread (it's up to you =)."""
+    If you're importing this program as a module you can pass this function your own Queue (output_queue) to be used for writing results via your own thread (e.g. to record results into a database or something other than CSV).  Alternatively you can just override the writeOut() method in OutputThread (it's up to you =)."""
 
     if output_queue is None:
-        output_queue = startOutputThread()
+        output_queue = startOutputThread(verbose, outfile)
     # Start up the Output and SSH threads
-    debug("Starting %s connection threads..." % max_threads)
     ssh_connect_queue = startSSHQueue(output_queue, max_threads)
 
     while len(hostlist) != 0: # Only add items to the ssh_connect_queue if there are available threads to take them.
@@ -355,23 +376,17 @@ def sshpt(hostlist, username, password, max_threads=10, timeout=30, commands=Fal
 def main():
     """Main program function:  Grabs command-line arguments, starts up threads, and runs the program."""
 
-    # Bring in some globals
-    global OUTFILE
-    global VERBOSE
-    global DEBUG
-
     # Grab command line arguments and the command to run (if any)
     usage = 'usage: %prog [options] "[command1]" "[command2]" ...'
     parser = OptionParser(usage=usage, version=__version__)
     parser.disable_interspersed_args()
     parser.add_option("-f", "--file", dest="hostfile", default=None, help="Location of the file containing the host list.", metavar="<file>")
-    parser.add_option("-o", "--outfile", dest="OUTFILE", default=None, help="Location of the file where the results will be saved.", metavar="<file>")
+    parser.add_option("-o", "--outfile", dest="outfile", default=None, help="Location of the file where the results will be saved.", metavar="<file>")
     parser.add_option("-a", "--authfile", dest="authfile", default=None, help="Location of the file containing the credentials to be used for connections (format is \"username:password\").", metavar="<file>")
     parser.add_option("-t", "--threads", dest="max_threads", default=10, type="int", help="Number of threads to spawn for simultaneous connection attempts [default: 10].", metavar="<int>")
     parser.add_option("-u", "--username", dest="username", default=None, help="The username to be used when connecting.", metavar="<username>")
     parser.add_option("-P", "--password", dest="password", default=None, help="The password to be used when connecting (not recommended--use an authfile unless the username and password are transient", metavar="<password>")
-    parser.add_option("-q", "--quiet", action="store_false", dest="VERBOSE", default=True, help="Don't print status messages to stdout (only print errors).")
-    parser.add_option("-d", "--debug", action="store_true", dest="DEBUG", default=False, help="Print debugging messages (to stdout).")
+    parser.add_option("-q", "--quiet", action="store_false", dest="verbose", default=True, help="Don't print status messages to stdout (only print errors).")
     parser.add_option("-c", "--copy-file", dest="copy_file", default=None, help="Location of the file to copy to and optionally execute (-x) on hosts.", metavar="<file>")
     parser.add_option("-D", "--dest", dest="destination", default="/tmp/", help="Path where the file should be copied on the remote host (default: /tmp/).", metavar="<path>")
     parser.add_option("-x", "--execute", action="store_true", dest="execute", default=False, help="Execute the copied file (just like executing a given command).")
@@ -407,16 +422,15 @@ def main():
     max_threads = options.max_threads
     timeout = options.timeout
     run_as = options.run_as
-    VERBOSE = options.VERBOSE
-    DEBUG = options.DEBUG
-    OUTFILE = options.OUTFILE
+    verbose = options.verbose
+    outfile = options.outfile
 
     if options.hostfile == None:
         print "Error: You must supply a file (-f <file>) containing the host list to check."
         print "Use the -h option to see usage information."
         sys.exit(2)
 
-    if options.OUTFILE is None and options.VERBOSE is False:
+    if options.outfile is None and options.verbose is False:
         print "Error: You have not specified any mechanism to output results."
         print "Please don't use quite mode (-q) without an output file (-o <file>)."
         sys.exit(2)
@@ -426,11 +440,9 @@ def main():
         sys.exit(2)
 
     # Read in the host list to check
-    debug("Reading in %s..." % options.hostfile)
     hostlist = open(options.hostfile).read()
 
     if options.authfile is not None:
-        debug("Using authfile for credentials.")
         credentials = open(options['authfile']).readline()
         username, password = credentials.split(":")
 
@@ -446,7 +458,7 @@ def main():
         for host in hostlist.split("\n"): # Turn the hostlist into an actual list
             if host != "":
                 hostlist_list.append(host)
-        sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as)
+        sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile)
     except KeyboardInterrupt:
         print 'caught KeyboardInterrupt, exiting...'
         return_code = 1 # Return code should be 1 if the user issues a SIGINT (control-C)
@@ -462,3 +474,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+else:
+    # This will be executed if sshpt was imported as a module
+    pass # Nothing yet
