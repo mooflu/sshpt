@@ -11,6 +11,7 @@ setup(name = 'sshpt',
       version = '1.1.0',
       description = 'SSH Power Tool - Run commands and copy files to multiple servers simultaneously WITHOUT pre-shared keys',
       scripts = ['sshpt.py'],
+      py_modules = ['sshpt'],
       classifiers=[
 	"Development Status :: 5 - Production/Stable",
 	"License :: OSI Approved :: GNU General Public License (GPL)",
