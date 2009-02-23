@@ -61,7 +61,7 @@ def normalizeString(string):
 class GenericThread(threading.Thread):
     """A baseline thread that includes the functions we want for all our threads so we don't have to duplicate code."""
     def quit(self):
-        sys.exit(0)
+        self.quitting = True
 
 class OutputThread(GenericThread):
     """This thread is here to prevent SSHThreads from simultaneously writing to the same file and mucking it all up.  Essentially, it allows sshpt to write results to an outfile as they come in instead of all at once when the program is finished.  This also prevents a 'kill -9' from destroying report resuls and also lets you do a 'tail -f <outfile>' to watch results in real-time.
@@ -76,6 +76,7 @@ class OutputThread(GenericThread):
         self.output_queue = output_queue
         self.verbose = verbose
         self.outfile = outfile
+        self.quitting = False
 
     def printToStdout(self, string):
         """Prints 'string' if self.verbose is set to True"""
@@ -109,7 +110,7 @@ class OutputThread(GenericThread):
             output.close()
 
     def run(self):
-        while True:
+        while not self.quitting:
             queueObj = self.output_queue.get()
             if queueObj == "quit":
                 self.quit()
@@ -142,10 +143,11 @@ class SSHThread(GenericThread):
         self.ssh_connect_queue = ssh_connect_queue
         self.output_queue = output_queue
         self.id = id
+        self.quitting = False
 
     def run (self):
         try:
-            while True:
+            while not self.quitting:
                 queueObj = self.ssh_connect_queue.get()
                 if queueObj == 'quit':
                     self.quit()
@@ -371,7 +373,7 @@ def sshpt(
                 hostlist.remove(host)
         sleep(1)
     ssh_connect_queue.join() # Wait until all jobs are done before exiting
-    output_queue.join() # Ditto
+    return output_queue
 
 def main():
     """Main program function:  Grabs command-line arguments, starts up threads, and runs the program."""
@@ -458,7 +460,8 @@ def main():
         for host in hostlist.split("\n"): # Turn the hostlist into an actual list
             if host != "":
                 hostlist_list.append(host)
-        sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile)
+        output_queue = sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile)
+        output_queue.join() # Just to be safe we wait for the OutputThread to finish before moving on
     except KeyboardInterrupt:
         print 'caught KeyboardInterrupt, exiting...'
         return_code = 1 # Return code should be 1 if the user issues a SIGINT (control-C)
