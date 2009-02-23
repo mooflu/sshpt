@@ -85,7 +85,7 @@ class OutputThread(GenericThread):
 
     def writeOut(self, queueObj):
         """Write relevant queueObj information to stdout and/or to the outfile (if one is set)"""
-        if queueObj['commands'] == False:
+        if queueObj['local_filepath']:
             queueObj['commands'] = "sshpt: sftp.put %s %s:%s" % (queueObj['local_filepath'], queueObj['host'], queueObj['remote_filepath'])
         elif queueObj['sudo'] is False:
             if len(queueObj['commands']) > 1: # Only prepend 'index: ' if we were passed more than one command
@@ -365,6 +365,9 @@ def sshpt(
         output_queue = startOutputThread(verbose, outfile)
     # Start up the Output and SSH threads
     ssh_connect_queue = startSSHQueue(output_queue, max_threads)
+    
+    if not commands and not local_filepath: # Assume we're just doing a connection test
+        commands = ['echo CONNECTION TEST',]
 
     while len(hostlist) != 0: # Only add items to the ssh_connect_queue if there are available threads to take them.
         for host in hostlist:
