@@ -1,14 +1,16 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 from setuptools import setup, find_packages
 import sys, os
 
-version = '1.0.4'
+version = '1.1.0'
 
 setup(name = 'sshpt',
       license = 'GPLv3',
-      version = '1.0.3',
+      version = '1.1.0',
       description = 'SSH Power Tool - Run commands and copy files to multiple servers simultaneously WITHOUT pre-shared keys',
+      scripts = ['sshpt.py'],
       classifiers=[
 	"Development Status :: 5 - Production/Stable",
 	"License :: OSI Approved :: GNU General Public License (GPL)",
