@@ -19,7 +19,7 @@ command = raw_input('Command: ')
 commands = [command,] # 'commands' has to be a list
 
 
-# Give ourselves an output queue to save results
+# Give ourselves an output queue to store results
 results_queue = Queue.Queue()
 
 sshpt.sshpt(hostlist, username, password, commands=commands, output_queue=results_queue)
