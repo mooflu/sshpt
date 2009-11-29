@@ -33,9 +33,9 @@ This program is meant for situations where shared keys are not an option.  If al
 """
 
 # Meta
-__version__ = '1.1.1'
+__version__ = '1.1.2'
 __license__ = "GNU General Public License (GPL) Version 3"
-__version_info__ = (1, 1, 1)
+__version_info__ = (1, 1, 2)
 __author__ = 'Dan McDougall <YouKnowWho@YouKnowWhat.com>'
 
 # Import built-in Python modules
