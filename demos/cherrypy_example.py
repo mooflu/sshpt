@@ -57,5 +57,5 @@ class SSHPTClass(object):
 
     index.exposed = True
     doSSHPT.exposed = True
- 
+
 cherrypy.quickstart(SSHPTClass())

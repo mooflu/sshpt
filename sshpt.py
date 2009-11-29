@@ -57,7 +57,7 @@ def normalizeString(string):
     string = string.strip() # Remove leading/trailing whitespace/blank lines
     srting = re.sub(r'(")', '""', string) # Convert double quotes to double double quotes (e.g. 'foo "bar" blah' becomes 'foo ""bar"" blah')
     return string
-    
+
 class GenericThread(threading.Thread):
     """A baseline thread that includes the functions we want for all our threads so we don't have to duplicate code."""
     def quit(self):
@@ -65,7 +65,7 @@ class GenericThread(threading.Thread):
 
 class OutputThread(GenericThread):
     """This thread is here to prevent SSHThreads from simultaneously writing to the same file and mucking it all up.  Essentially, it allows sshpt to write results to an outfile as they come in instead of all at once when the program is finished.  This also prevents a 'kill -9' from destroying report resuls and also lets you do a 'tail -f <outfile>' to watch results in real-time.
-    
+
         output_queue: Queue.Queue(): The queue to use for incoming messages.
         verbose - Boolean: Whether or not we should output to stdout.
         outfile - String: Path to the file where we'll store results.
@@ -97,7 +97,9 @@ class OutputThread(GenericThread):
                 queueObj['commands'] = "\n".join(["%s: sudo -u %s %s" % (index, queueObj['run_as'], command) for index, command in enumerate(queueObj['commands'])])
             else:
                 queueObj['commands'] = "sudo -u %s" % "".join(queueObj['commands'])
-        if len(queueObj['command_output']) > 1: # Only prepend 'index: ' if we were passed more than one command
+        if isinstance(queueObj['command_output'], str):
+            pass # Since it is a string we'll assume it is already formatted properly
+        elif len(queueObj['command_output']) > 1: # Only prepend 'index: ' if we were passed more than one command
             queueObj['command_output'] = "\n".join(["%s: %s" % (index, command) for index, command in enumerate(queueObj['command_output'])])
         else:
             queueObj['command_output'] = "\n".join(queueObj['command_output'])
@@ -151,7 +153,7 @@ class SSHThread(GenericThread):
                 queueObj = self.ssh_connect_queue.get()
                 if queueObj == 'quit':
                     self.quit()
-                    
+
                 # These variable assignments are just here for readability further down
                 host = queueObj['host']
                 username = queueObj['username']
@@ -164,7 +166,7 @@ class SSHThread(GenericThread):
                 remove = queueObj['remove']
                 sudo = queueObj['sudo']
                 run_as = queueObj['run_as']
-                
+
                 success, command_output = attemptConnection(host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as)
                 if success:
                     queueObj['connection_result'] = "SUCCESS"
@@ -365,7 +367,7 @@ def sshpt(
         output_queue = startOutputThread(verbose, outfile)
     # Start up the Output and SSH threads
     ssh_connect_queue = startSSHQueue(output_queue, max_threads)
-    
+
     if not commands and not local_filepath: # Assume we're just doing a connection test
         commands = ['echo CONNECTION TEST',]
 
