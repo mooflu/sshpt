@@ -19,6 +19,7 @@
 #
 #       http://www.gnu.org/licenses/gpl.html
 
+# TODO:  Add the ability to have host-specific usernames/passwords in the hostlist file
 # TODO:  Add the ability to pass command line arguments to uploaded/executed files
 # TODO:  Add stderr handling
 # TODO:  Add ability to specify the ownership and permissions of uploaded files (when sudo is used)
@@ -470,11 +471,14 @@ def main():
     except KeyboardInterrupt:
         print 'caught KeyboardInterrupt, exiting...'
         return_code = 1 # Return code should be 1 if the user issues a SIGINT (control-C)
+        # Clean up
+        stopSSHQueue()
+        stopOutputThread()
+        sys.exit(return_code)
     except Exception, detail:
         print 'caught Exception...'
         print detail
         return_code = 2
-    finally:
         # Clean up
         stopSSHQueue()
         stopOutputThread()
