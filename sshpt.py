@@ -24,6 +24,7 @@
 # TODO:  Add stderr handling
 # TODO:  Add ability to specify the ownership and permissions of uploaded files (when sudo is used)
 # TODO:  Add logging using the standard module
+# TODO:  Add the ability to change the port (duh, why didn't I add this before?!?).
 
 # Docstring:
 """
@@ -130,6 +131,7 @@ class SSHThread(GenericThread):
 
     Here's the list of variables that are added to the output queue before it is put():
         queueObj['host']
+        queueObj['port']
         queueObj['username']
         queueObj['password']
         queueObj['commands'] - List: Commands that were executed
@@ -158,6 +160,7 @@ class SSHThread(GenericThread):
 
                 # These variable assignments are just here for readability further down
                 host = queueObj['host']
+                port = queueObj['port']
                 username = queueObj['username']
                 password = queueObj['password']
                 timeout = queueObj['timeout']
@@ -169,7 +172,20 @@ class SSHThread(GenericThread):
                 sudo = queueObj['sudo']
                 run_as = queueObj['run_as']
 
-                success, command_output = attemptConnection(host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as)
+                success, command_output = attemptConnection(
+                    host,
+                    username,
+                    password,
+                    timeout,
+                    commands,
+                    local_filepath,
+                    remote_filepath,
+                    execute,
+                    remove,
+                    sudo,
+                    run_as,
+                    port
+                )
                 if success:
                     queueObj['connection_result'] = "SUCCESS"
                 else:
@@ -212,7 +228,7 @@ def stopSSHQueue():
             t.quit()
     return True
 
-def queueSSHConnection(ssh_connect_queue, host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as):
+def queueSSHConnection(ssh_connect_queue, host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, port):
     """Add files to the SSH Queue (ssh_connect_queue)"""
     queueObj = {}
     queueObj['host'] = host
@@ -226,17 +242,18 @@ def queueSSHConnection(ssh_connect_queue, host, username, password, timeout, com
     queueObj['remove'] = remove
     queueObj['sudo'] = sudo
     queueObj['run_as'] = run_as
+    queueObj['port'] = port
     ssh_connect_queue.put(queueObj)
     return True
 
-def paramikoConnect(host, username, password, timeout):
+def paramikoConnect(host, username, password, timeout, port=22):
     """Connects to 'host' and returns a Paramiko transport object to use in further communications"""
     # Uncomment this line to turn on Paramiko debugging (good for troubleshooting why some servers report connection failures)
     #paramiko.util.log_to_file('paramiko.log')
     ssh = paramiko.SSHClient()
     try:
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(host, port=22, username=username, password=password, timeout=timeout)
+        ssh.connect(host, port=port, username=username, password=password, timeout=timeout)
     except Exception, detail:
         # Connecting failed (for whatever reason)
         ssh = str(detail)
@@ -282,7 +299,8 @@ def attemptConnection(
         execute=False, # Whether or not the SFTP'd file should be executed after it is uploaded
         remove=False, # Whether or not the SFTP'd file should be removed after execution
         sudo=False, # Whether or not sudo should be used for commands and file operations
-        run_as='root' # User to become when using sudo
+        run_as='root', # User to become when using sudo
+        port=22, # Port to use when connecting
         ):
     """Attempt to login to 'host' using 'username'/'password' and execute 'commands'.
     Will excute commands via sudo if 'sudo' is set to True (as root by default) and optionally as a given user (run_as).
@@ -293,7 +311,7 @@ def attemptConnection(
 
     if host != "":
         try:
-            ssh = paramikoConnect(host, username, password, timeout)
+            ssh = paramikoConnect(host, username, password, timeout, port)
             if type(ssh) == type(""): # If ssh is a string that means the connection failed and 'ssh' is the details as to why
                 connection_result = False
                 command_output = ssh
@@ -393,8 +411,9 @@ def main():
     parser.add_option("-o", "--outfile", dest="outfile", default=None, help="Location of the file where the results will be saved.", metavar="<file>")
     parser.add_option("-a", "--authfile", dest="authfile", default=None, help="Location of the file containing the credentials to be used for connections (format is \"username:password\").", metavar="<file>")
     parser.add_option("-t", "--threads", dest="max_threads", default=10, type="int", help="Number of threads to spawn for simultaneous connection attempts [default: 10].", metavar="<int>")
+    parser.add_option("-p", "--port", dest="port", default=22, help="The port to be used when connecting.  Defaults to 22.", metavar="<port>")
     parser.add_option("-u", "--username", dest="username", default=os.getlogin(), help="The username to be used when connecting.  Defaults to the currently logged-in user.", metavar="<username>")
-    parser.add_option("-P", "--password", dest="password", default=None, help="The password to be used when connecting (not recommended--use an authfile unless the username and password are transient", metavar="<password>")
+    parser.add_option("-P", "--password", dest="password", default=None, help="The password to be used when connecting (not recommended--use an authfile unless the username and password are transient).", metavar="<password>")
     parser.add_option("-q", "--quiet", action="store_false", dest="verbose", default=True, help="Don't print status messages to stdout (only print errors).")
     parser.add_option("-c", "--copy-file", dest="copy_file", default=None, help="Location of the file to copy to and optionally execute (-x) on hosts.", metavar="<file>")
     parser.add_option("-D", "--dest", dest="destination", default="/tmp/", help="Path where the file should be copied on the remote host (default: /tmp/).", metavar="<path>")
