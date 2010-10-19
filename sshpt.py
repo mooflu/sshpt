@@ -160,7 +160,6 @@ class SSHThread(GenericThread):
 
                 # These variable assignments are just here for readability further down
                 host = queueObj['host']
-                port = queueObj['port']
                 username = queueObj['username']
                 password = queueObj['password']
                 timeout = queueObj['timeout']
@@ -171,6 +170,7 @@ class SSHThread(GenericThread):
                 remove = queueObj['remove']
                 sudo = queueObj['sudo']
                 run_as = queueObj['run_as']
+                port = int(queueObj['port'])
 
                 success, command_output = attemptConnection(
                     host,
@@ -311,7 +311,7 @@ def attemptConnection(
 
     if host != "":
         try:
-            ssh = paramikoConnect(host, username, password, timeout, port)
+            ssh = paramikoConnect(host, username, password, timeout, port=port)
             if type(ssh) == type(""): # If ssh is a string that means the connection failed and 'ssh' is the details as to why
                 connection_result = False
                 command_output = ssh
@@ -374,7 +374,8 @@ def sshpt(
         run_as='root', # User to become when using sudo
         verbose=True, # Whether or not we should output connection results to stdout
         outfile=None, # Path to the file where we want to store connection results
-        output_queue=None # Queue.Queue() where connection results should be put().  If none is given it will use the OutputThread default (output_queue)
+        output_queue=None, # Queue.Queue() where connection results should be put().  If none is given it will use the OutputThread default (output_queue)
+        port=22, # Port to use when connecting
         ):
     """Given a list of hosts (hostlist) and credentials (username, password), connect to them all via ssh and optionally:
         * Execute 'commands' on the host.
@@ -394,7 +395,7 @@ def sshpt(
     while len(hostlist) != 0: # Only add items to the ssh_connect_queue if there are available threads to take them.
         for host in hostlist:
             if ssh_connect_queue.qsize() <= max_threads:
-                queueSSHConnection(ssh_connect_queue, host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as)
+                queueSSHConnection(ssh_connect_queue, host, username, password, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, port)
                 hostlist.remove(host)
         sleep(1)
     ssh_connect_queue.join() # Wait until all jobs are done before exiting
@@ -442,6 +443,7 @@ def main():
     # Assign the options to more readable variables
     username = options.username
     password = options.password
+    port = options.port
     local_filepath = options.copy_file
     remote_filepath = options.destination
     execute = options.execute
@@ -473,11 +475,12 @@ def main():
     if options.authfile is not None:
         credentials = open(options.authfile).readline()
         username, password = credentials.split(":")
+        password = password.rstrip('\n') # Get rid of trailing newline
 
     # Get the username and password to use when checking hosts
-    if options.username == None:
+    if username == None:
         username = raw_input('Username: ')
-    if options.password == None:
+    if password == None:
         password = getpass.getpass('Password: ')
 
     hostlist_list = []
@@ -486,7 +489,7 @@ def main():
         for host in hostlist.split("\n"): # Turn the hostlist into an actual list
             if host != "":
                 hostlist_list.append(host)
-        output_queue = sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile)
+        output_queue = sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile, port=port)
         output_queue.join() # Just to be safe we wait for the OutputThread to finish before moving on
     except KeyboardInterrupt:
         print 'caught KeyboardInterrupt, exiting...'
