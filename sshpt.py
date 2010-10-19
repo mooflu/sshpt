@@ -3,7 +3,7 @@
 #
 #       sshpt.py
 #
-#       Copyright 2009 Dan McDougall <YouKnowWho@YouKnowWhat.com>
+#       Copyright 2010 Dan McDougall <YouKnowWho@YouKnowWhat.com>
 #
 #       This program is free software; you can redistribute it and/or modify
 #       it under the terms of the GNU General Public License as published by
@@ -24,7 +24,6 @@
 # TODO:  Add stderr handling
 # TODO:  Add ability to specify the ownership and permissions of uploaded files (when sudo is used)
 # TODO:  Add logging using the standard module
-# TODO:  Add the ability to change the port (duh, why didn't I add this before?!?).
 
 # Docstring:
 """
@@ -36,9 +35,9 @@ This program is meant for situations where shared keys are not an option.  If al
 """
 
 # Meta
-__version__ = '1.1.2'
+__version__ = '1.1.3'
 __license__ = "GNU General Public License (GPL) Version 3"
-__version_info__ = (1, 1, 2)
+__version_info__ = (1, 1, 3)
 __author__ = 'Dan McDougall <YouKnowWho@YouKnowWhat.com>'
 
 # Import built-in Python modules
