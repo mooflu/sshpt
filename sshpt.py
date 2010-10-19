@@ -295,7 +295,7 @@ def attemptConnection(
         timeout=30, # Connection timeout
         commands=False, # Either False for no commnads or a list
         local_filepath=False, # Local path of the file to SFTP
-        remote_filepath='/tmp/', # Destination path where the file should end up on the host
+        remote_filepath='/tmp', # Destination path where the file should end up on the host
         execute=False, # Whether or not the SFTP'd file should be executed after it is uploaded
         remove=False, # Whether or not the SFTP'd file should be removed after execution
         sudo=False, # Whether or not sudo should be used for commands and file operations
@@ -318,32 +318,26 @@ def attemptConnection(
                 return connection_result, command_output
             command_output = []
             if local_filepath:
-                if sudo: # SFTP the file to a temporary location then copy/move it to the final destination via sudo
-                    sftpPut(ssh, local_filepath, '/tmp/sshpt_temp')
-                    copy_command = "cp -f /tmp/sshpt_temp /tmp/sshpt_temp2" # Copy the file to another temp location so it gets the sudo user's default file ownership and permissions
-                    executeCommand(transport=ssh, command=copy_command, sudo=sudo, run_as=run_as, password=password)
-                    move_command = "mv -f /tmp/sshpt_temp2 %s" % remote_filepath # Move the file to its final destination
-                    executeCommand(transport=ssh, command=move_command, sudo=sudo, run_as=run_as, password=password)
-                    cleanup_command = "rm -f /tmp/sshpt_temp" # Clean up after ourselves
-                    executeCommand(transport=ssh, command=cleanup_command, sudo=sudo, run_as=run_as, password=password)
-                else:
-                    try:
-                        sftpPut(ssh, local_filepath, remote_filepath)
-                    except IOError, details: # i.e. permission denied
-                        command_output.append(str(details)) # Make sure the error is included in the command output
+                remote_filepath = remote_filepath.rstrip('/')
+                local_short_filename = local_filepath.split("/")[-1] or "sshpt_temp"
+                remote_fullpath = "%s/%s" % (remote_filepath,local_short_filename)
+                try:
+                    sftpPut(ssh, local_filepath, remote_fullpath)
+                except IOError, details: # i.e. permission denied
+                    command_output.append(str(details)) # Make sure the error is included in the command output
                 if execute:
-                    chmod_command = "chmod a+x %s" % remote_filepath # Make it executable (a+x in case we run as another user via sudo)
+                    chmod_command = "chmod a+x %s" % remote_fullpath # Make it executable (a+x in case we run as another user via sudo)
                     executeCommand(transport=ssh, command=chmod_command, sudo=sudo, run_as=run_as, password=password)
-                    commands = [remote_filepath,] # The command to execute is now the uploaded file
+                    commands = [remote_fullpath,] # The command to execute is now the uploaded file
                 else: # We're just copying a file (no execute) so let's return it's details
-                    commands = ["ls -l %s" % remote_filepath,]
+                    commands = ["ls -l %s" % remote_fullpath,]
             if commands:
                 for command in commands: # This makes a list of lists (each line of output in command_output is it's own item in the list)
                     command_output.append(executeCommand(transport=ssh, command=command, sudo=sudo, run_as=run_as, password=password))
             elif commands is False and execute is False: # If we're not given anything to execute run the uptime command to make sure that we can execute *something*
                 command_output = executeCommand(transport=ssh, command='uptime', sudo=sudo, run_as=run_as, password=password)
             if local_filepath and remove: # Clean up/remove the file we just uploaded and executed
-                rm_command = "rm -f %s" % remote_filepath
+                rm_command = "rm -f %s" % remote_fullpath
                 executeCommand(transport=ssh, command=rm_command, sudo=sudo, run_as=run_as, password=password)
 
             ssh.close()
