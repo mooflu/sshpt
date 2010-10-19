@@ -23,6 +23,7 @@
 # TODO:  Add the ability to pass command line arguments to uploaded/executed files
 # TODO:  Add stderr handling
 # TODO:  Add ability to specify the ownership and permissions of uploaded files (when sudo is used)
+# TODO:  Add logging using the standard module
 
 # Docstring:
 """
@@ -384,11 +385,6 @@ def sshpt(
 def main():
     """Main program function:  Grabs command-line arguments, starts up threads, and runs the program."""
 
-    try: # Set the default username to the current user
-        username = os.getlogin()
-    except:
-        username = None
-
     # Grab command line arguments and the command to run (if any)
     usage = 'usage: %prog [options] "[command1]" "[command2]" ...'
     parser = OptionParser(usage=usage, version=__version__)
@@ -397,7 +393,7 @@ def main():
     parser.add_option("-o", "--outfile", dest="outfile", default=None, help="Location of the file where the results will be saved.", metavar="<file>")
     parser.add_option("-a", "--authfile", dest="authfile", default=None, help="Location of the file containing the credentials to be used for connections (format is \"username:password\").", metavar="<file>")
     parser.add_option("-t", "--threads", dest="max_threads", default=10, type="int", help="Number of threads to spawn for simultaneous connection attempts [default: 10].", metavar="<int>")
-    parser.add_option("-u", "--username", dest="username", default=username, help="The username to be used when connecting.", metavar="<username>")
+    parser.add_option("-u", "--username", dest="username", default=os.getlogin(), help="The username to be used when connecting.  Defaults to the currently logged-in user.", metavar="<username>")
     parser.add_option("-P", "--password", dest="password", default=None, help="The password to be used when connecting (not recommended--use an authfile unless the username and password are transient", metavar="<password>")
     parser.add_option("-q", "--quiet", action="store_false", dest="verbose", default=True, help="Don't print status messages to stdout (only print errors).")
     parser.add_option("-c", "--copy-file", dest="copy_file", default=None, help="Location of the file to copy to and optionally execute (-x) on hosts.", metavar="<file>")
@@ -425,6 +421,7 @@ def main():
         commands = args
 
     # Assign the options to more readable variables
+    username = options.username
     password = options.password
     local_filepath = options.copy_file
     remote_filepath = options.destination
@@ -455,7 +452,7 @@ def main():
     hostlist = open(options.hostfile).read()
 
     if options.authfile is not None:
-        credentials = open(options['authfile']).readline()
+        credentials = open(options.authfile).readline()
         username, password = credentials.split(":")
 
     # Get the username and password to use when checking hosts
