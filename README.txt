@@ -1,6 +1,6 @@
 sshpt -- SSH Power Tool
 
-Copyright (C) 2009 Dan McDougall.
+Copyright (C) 2011 Dan McDougall.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License (GPL) version 3 as published by the

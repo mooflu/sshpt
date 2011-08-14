@@ -24,6 +24,7 @@
 # TODO:  Add stderr handling
 # TODO:  Add ability to specify the ownership and permissions of uploaded files (when sudo is used)
 # TODO:  Add logging using the standard module
+# TODO:  Add the ability to specify a host list on the command line.  Something like '--hosts="host1:host2:host3"'
 
 # Docstring:
 """
@@ -44,6 +45,7 @@ __author__ = 'Dan McDougall <YouKnowWho@YouKnowWhat.com>'
 import getpass, threading, Queue, sys, os, re, datetime
 from optparse import OptionParser
 from time import sleep
+import select
 
 # Import 3rd party modules
 try:
@@ -402,11 +404,12 @@ def main():
     parser = OptionParser(usage=usage, version=__version__)
     parser.disable_interspersed_args()
     parser.add_option("-f", "--file", dest="hostfile", default=None, help="Location of the file containing the host list.", metavar="<file>")
+    parser.add_option("-S", "--stdin", dest="stdin", default=False, action="store_true", help="Read hosts from standard input")
     parser.add_option("-o", "--outfile", dest="outfile", default=None, help="Location of the file where the results will be saved.", metavar="<file>")
     parser.add_option("-a", "--authfile", dest="authfile", default=None, help="Location of the file containing the credentials to be used for connections (format is \"username:password\").", metavar="<file>")
     parser.add_option("-t", "--threads", dest="max_threads", default=10, type="int", help="Number of threads to spawn for simultaneous connection attempts [default: 10].", metavar="<int>")
     parser.add_option("-p", "--port", dest="port", default=22, help="The port to be used when connecting.  Defaults to 22.", metavar="<port>")
-    parser.add_option("-u", "--username", dest="username", default=os.getlogin(), help="The username to be used when connecting.  Defaults to the currently logged-in user.", metavar="<username>")
+    parser.add_option("-u", "--username", dest="username", default=os.environ['LOGNAME'], help="The username to be used when connecting.  Defaults to the currently logged-in user.", metavar="<username>")
     parser.add_option("-P", "--password", dest="password", default=None, help="The password to be used when connecting (not recommended--use an authfile unless the username and password are transient).", metavar="<password>")
     parser.add_option("-q", "--quiet", action="store_false", dest="verbose", default=True, help="Don't print status messages to stdout (only print errors).")
     parser.add_option("-c", "--copy-file", dest="copy_file", default=None, help="Location of the file to copy to and optionally execute (-x) on hosts.", metavar="<file>")
@@ -416,13 +419,14 @@ def main():
     parser.add_option("-T", "--timeout", dest="timeout", default=30, help="Timeout (in seconds) before giving up on an SSH connection (default: 30)", metavar="<seconds>")
     parser.add_option("-s", "--sudo", action="store_true", dest="sudo", default=False, help="Use sudo to execute the command (default: as root).")
     parser.add_option("-U", "--sudouser", dest="run_as", default="root", help="Run the command (via sudo) as this user.", metavar="<username>")
+    
     (options, args) = parser.parse_args()
 
     # Check to make sure we were passed at least one command line argument
     try:
         sys.argv[1]
     except:
-        print "\nError:  At a minimum you must supply an input hostfile (-f)"
+        print "\nError:  At a minimum you must supply an input hostfile (-f) or pipe in the hostlist (--stdin)."
         parser.print_help()
         sys.exit(2)
 
@@ -448,9 +452,14 @@ def main():
     verbose = options.verbose
     outfile = options.outfile
 
-    if options.hostfile == None:
-        print "Error: You must supply a file (-f <file>) containing the host list to check."
+    if options.hostfile == None and not options.stdin:
+        print "Error: You must supply a file (-f <file>) containing the host list to check "
+        print "or use the --stdin option to provide them via standard input"
         print "Use the -h option to see usage information."
+        sys.exit(2)
+        
+    if options.hostfile and options.stdin:
+        print "Error: --file and --stdin are mutually exclusive.  Exactly one must be provided."
         sys.exit(2)
 
     if options.outfile is None and options.verbose is False:
@@ -463,7 +472,15 @@ def main():
         sys.exit(2)
 
     # Read in the host list to check
-    hostlist = open(options.hostfile).read()
+    if options.hostfile:
+        hostlist = open(options.hostfile).read()
+    elif options.stdin:
+        # if stdin wasn't piped in, prompt the user for it now
+        if not select.select([sys.stdin,],[],[],0.0)[0]:
+            sys.stdout.write("Enter list of hosts (one entry per line). ")
+            sys.stdout.write("Ctrl-D to end input.\n")
+        # in either case, read data from stdin
+        hostlist = sys.stdin.read()
 
     if options.authfile is not None:
         credentials = open(options.authfile).readline()
