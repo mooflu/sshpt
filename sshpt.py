@@ -3,7 +3,7 @@
 #
 #       sshpt.py
 #
-#       Copyright 2010 Dan McDougall <YouKnowWho@YouKnowWhat.com>
+#       Copyright 2011 Dan McDougall <YouKnowWho@YouKnowWhat.com>
 #
 #       This program is free software; you can redistribute it and/or modify
 #       it under the terms of the GNU General Public License as published by
@@ -36,9 +36,9 @@ This program is meant for situations where shared keys are not an option.  If al
 """
 
 # Meta
-__version__ = '1.1.3'
+__version__ = '1.2.0'
 __license__ = "GNU General Public License (GPL) Version 3"
-__version_info__ = (1, 1, 3)
+__version_info__ = (1, 2, 0)
 __author__ = 'Dan McDougall <YouKnowWho@YouKnowWhat.com>'
 
 # Import built-in Python modules
