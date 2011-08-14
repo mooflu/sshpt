@@ -4,12 +4,12 @@
 from setuptools import setup, find_packages
 import sys, os
 
-version = '1.1.2'
+version = '1.2.0'
 
 setup(name = 'sshpt',
       license = 'GPLv3',
-      version = '1.1.2',
-      description = 'SSH Power Tool - Run commands and copy files to multiple servers simultaneously WITHOUT pre-shared keys',
+      version = '1.2.0',
+      description = 'SSH Power Tool - Run commands and copy files to multiple servers simultaneously WITHOUT requiring pre-shared authentication keys',
       scripts = ['sshpt.py'],
       py_modules = ['sshpt'],
       classifiers=[
