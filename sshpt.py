@@ -59,7 +59,7 @@ def normalizeString(string):
     """Removes/fixes leading/trailing newlines/whitespace and escapes double quotes with double quotes (to comply with CSV format)"""
     string = re.sub(r'(\r\n|\r|\n)', '\n', string) # Convert all newlines to unix newlines
     string = string.strip() # Remove leading/trailing whitespace/blank lines
-    srting = re.sub(r'(")', '""', string) # Convert double quotes to double double quotes (e.g. 'foo "bar" blah' becomes 'foo ""bar"" blah')
+    string = re.sub(r'(")', '""', string) # Convert double quotes to double double quotes (e.g. 'foo "bar" blah' becomes 'foo ""bar"" blah')
     return string
 
 class GenericThread(threading.Thread):
@@ -73,13 +73,15 @@ class OutputThread(GenericThread):
         output_queue: Queue.Queue(): The queue to use for incoming messages.
         verbose - Boolean: Whether or not we should output to stdout.
         outfile - String: Path to the file where we'll store results.
+        outputhandle - file or StringIO object where we'll store results.
     """
-    def __init__(self, output_queue, verbose=True, outfile=None):
+    def __init__(self, output_queue, verbose=True, outfile=None, outputhandle=None):
         """Name ourselves and assign the variables we were instanciated with."""
         threading.Thread.__init__(self, name="OutputThread")
         self.output_queue = output_queue
         self.verbose = verbose
         self.outfile = outfile
+        self.outputhandle = outputhandle
         self.quitting = False
 
     def printToStdout(self, string):
@@ -88,7 +90,7 @@ class OutputThread(GenericThread):
             print string
 
     def writeOut(self, queueObj):
-        """Write relevant queueObj information to stdout and/or to the outfile (if one is set)"""
+        """Write relevant queueObj information to stdout and/or to the outfile/outputhandle (if one is set)"""
         if queueObj['local_filepath']:
             queueObj['commands'] = "sshpt: sftp.put %s %s:%s" % (queueObj['local_filepath'], queueObj['host'], queueObj['remote_filepath'])
         elif queueObj['sudo'] is False:
@@ -109,6 +111,9 @@ class OutputThread(GenericThread):
             queueObj['command_output'] = "\n".join(queueObj['command_output'])
         csv_out = "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"" % (queueObj['host'], queueObj['connection_result'], datetime.datetime.now(), queueObj['commands'], queueObj['command_output'])
         self.printToStdout(csv_out)
+        if self.outputhandle is not None:
+            csv_out = "%s\n" % csv_out
+            self.outputhandle.write(csv_out)
         if self.outfile is not None:
             csv_out = "%s\n" % csv_out
             output = open(self.outfile, 'a')
@@ -198,10 +203,10 @@ class SSHThread(GenericThread):
             print detail
             self.quit()
 
-def startOutputThread(verbose, outfile):
+def startOutputThread(verbose, outfile, outputhandle):
     """Starts up the OutputThread (which is used by SSHThreads to print/write out results)."""
     output_queue = Queue.Queue()
-    output_thread = OutputThread(output_queue, verbose, outfile)
+    output_thread = OutputThread(output_queue, verbose, outfile, outputhandle)
     output_thread.setDaemon(True)
     output_thread.start()
     return output_queue
@@ -369,6 +374,7 @@ def sshpt(
         run_as='root', # User to become when using sudo
         verbose=True, # Whether or not we should output connection results to stdout
         outfile=None, # Path to the file where we want to store connection results
+        outputhandle=None, # file object where we want to store connection results
         output_queue=None, # Queue.Queue() where connection results should be put().  If none is given it will use the OutputThread default (output_queue)
         port=22, # Port to use when connecting
         ):
@@ -380,7 +386,7 @@ def sshpt(
     If you're importing this program as a module you can pass this function your own Queue (output_queue) to be used for writing results via your own thread (e.g. to record results into a database or something other than CSV).  Alternatively you can just override the writeOut() method in OutputThread (it's up to you =)."""
 
     if output_queue is None:
-        output_queue = startOutputThread(verbose, outfile)
+        output_queue = startOutputThread(verbose, outfile, outputhandle)
     # Start up the Output and SSH threads
     ssh_connect_queue = startSSHQueue(output_queue, max_threads)
 
@@ -451,6 +457,7 @@ def main():
     run_as = options.run_as
     verbose = options.verbose
     outfile = options.outfile
+    outputhandle = options.outputhandle
 
     if options.hostfile == None and not options.stdin:
         print "Error: You must supply a file (-f <file>) containing the host list to check "
@@ -462,7 +469,7 @@ def main():
         print "Error: --file and --stdin are mutually exclusive.  Exactly one must be provided."
         sys.exit(2)
 
-    if options.outfile is None and options.verbose is False:
+    if options.outfile is None and options.outputhandle is None and options.verbose is False:
         print "Error: You have not specified any mechanism to output results."
         print "Please don't use quite mode (-q) without an output file (-o <file>)."
         sys.exit(2)
@@ -499,7 +506,7 @@ def main():
         for host in hostlist.split("\n"): # Turn the hostlist into an actual list
             if host != "":
                 hostlist_list.append(host)
-        output_queue = sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile, port=port)
+        output_queue = sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile, outputhandle, port=port)
         output_queue.join() # Just to be safe we wait for the OutputThread to finish before moving on
     except KeyboardInterrupt:
         print 'caught KeyboardInterrupt, exiting...'
