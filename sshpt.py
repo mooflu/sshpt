@@ -276,7 +276,7 @@ def sftpPut(transport, local_filepath, remote_filepath):
 def exec_command( transport, command ):
     return transport.exec_command( command )
 
-#via pty combines stderr into stdout
+#via pty combines stdin, stderr into stdout
 def exec_command_via_pty( transport, command, bufsize=-1 ):
     chan = transport._transport.open_session() 
     chan.get_pty()
@@ -286,10 +286,22 @@ def exec_command_via_pty( transport, command, bufsize=-1 ):
     stderr = chan.makefile_stderr('rb', bufsize) 
     return stdin, stdout, stderr
 
+#combines stderr into stdout, but doesn't preserve order
+def exec_command_combine_stderr( transport, command, bufsize=-1 ):
+    chan = transport._transport.open_session() 
+    chan.set_combine_stderr(True)
+    chan.exec_command(command) 
+    stdin = chan.makefile('wb', bufsize) 
+    stdout = chan.makefile('rb', bufsize) 
+    stderr = chan.makefile_stderr('rb', bufsize) 
+    return stdin, stdout, stderr
+
 def sudoExecute(transport, command, password, run_as='root'):
     """Executes the given command via sudo as the specified user (run_as) using the given Paramiko transport object.
     Returns stdout, stderr (after command execution)"""
-    stdin, stdout, stderr = exec_command_via_pty(transport, "sudo -S -u %s %s" % (run_as, command))
+    stdin, stdout, stderr = exec_command(transport, "sudo -k -S -u %s %s" % (run_as, command))
+    #FB: not using exec_command_via_pty since it sometimes hangs on password input. Timing? 
+    #    Appending stderr to stdout in executeCommand when sudo.
     if stdout.channel.closed is False: # If stdout is still open then sudo is asking us for a password
         stdin.write('%s\n' % password)
         stdin.flush()
@@ -304,7 +316,17 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
     else:
         stdin, stdout, stderr = exec_command_via_pty(transport, command)
     command_output = stdout.readlines()
+    command_erroutput = stderr.readlines()
+
+    #sudo asks for a password, don't include this in output
+    if sudo and len(command_erroutput) > 0:
+        command_erroutput.pop(0)
+
     command_output = "".join(command_output)
+    command_erroutput = "".join(command_erroutput)
+    if len(command_erroutput) > 0:
+        command_output = command_output + '\nErrors:\n' + command_erroutput
+
     return command_output
 
 def attemptConnection(
