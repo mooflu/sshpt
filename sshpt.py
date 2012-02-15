@@ -299,7 +299,7 @@ def exec_command_combine_stderr( transport, command, bufsize=-1 ):
 def sudoExecute(transport, command, password, run_as='root'):
     """Executes the given command via sudo as the specified user (run_as) using the given Paramiko transport object.
     Returns stdout, stderr (after command execution)"""
-    stdin, stdout, stderr = exec_command(transport, "sudo -k -S -u %s %s" % (run_as, command))
+    stdin, stdout, stderr = exec_command(transport, "sudo -S -u %s %s" % (run_as, command))
     #FB: not using exec_command_via_pty since it sometimes hangs on password input. Timing? 
     #    Appending stderr to stdout in executeCommand when sudo.
     if stdout.channel.closed is False: # If stdout is still open then sudo is asking us for a password
