@@ -273,10 +273,23 @@ def sftpPut(transport, local_filepath, remote_filepath):
         remote_filepath = os.path.normpath(remote_filepath + "/")
     sftp.put(local_filepath, remote_filepath)
 
+def exec_command( transport, command ):
+    return transport.exec_command( command )
+
+#via pty combines stderr into stdout
+def exec_command_via_pty( transport, command, bufsize=-1 ):
+    chan = transport._transport.open_session() 
+    chan.get_pty()
+    chan.exec_command(command) 
+    stdin = chan.makefile('wb', bufsize) 
+    stdout = chan.makefile('rb', bufsize) 
+    stderr = chan.makefile_stderr('rb', bufsize) 
+    return stdin, stdout, stderr
+
 def sudoExecute(transport, command, password, run_as='root'):
     """Executes the given command via sudo as the specified user (run_as) using the given Paramiko transport object.
     Returns stdout, stderr (after command execution)"""
-    stdin, stdout, stderr = transport.exec_command("sudo -S -u %s %s" % (run_as, command))
+    stdin, stdout, stderr = exec_command_via_pty(transport, "sudo -S -u %s %s" % (run_as, command))
     if stdout.channel.closed is False: # If stdout is still open then sudo is asking us for a password
         stdin.write('%s\n' % password)
         stdin.flush()
@@ -289,7 +302,7 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
     if sudo:
         stdout, stderr = sudoExecute(transport=transport, command=command, password=password, run_as=run_as)
     else:
-        stdin, stdout, stderr = transport.exec_command(command)
+        stdin, stdout, stderr = exec_command_via_pty(transport, command)
     command_output = stdout.readlines()
     command_output = "".join(command_output)
     return command_output
@@ -457,7 +470,8 @@ def main():
     run_as = options.run_as
     verbose = options.verbose
     outfile = options.outfile
-    outputhandle = options.outputhandle
+
+    outputhandle = None
 
     if options.hostfile == None and not options.stdin:
         print "Error: You must supply a file (-f <file>) containing the host list to check "
@@ -469,7 +483,7 @@ def main():
         print "Error: --file and --stdin are mutually exclusive.  Exactly one must be provided."
         sys.exit(2)
 
-    if options.outfile is None and options.outputhandle is None and options.verbose is False:
+    if options.outfile is None and outputhandle is None and options.verbose is False:
         print "Error: You have not specified any mechanism to output results."
         print "Please don't use quite mode (-q) without an output file (-o <file>)."
         sys.exit(2)
