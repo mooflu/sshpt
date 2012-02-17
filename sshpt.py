@@ -314,7 +314,7 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
     if sudo:
         stdout, stderr = sudoExecute(transport=transport, command=command, password=password, run_as=run_as)
     else:
-        stdin, stdout, stderr = exec_command_via_pty(transport, command)
+        stdin, stdout, stderr = exec_command(transport, command)
     command_output = stdout.readlines()
     command_erroutput = stderr.readlines()
 
