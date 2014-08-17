@@ -46,6 +46,7 @@ import getpass, threading, Queue, sys, os, re, datetime
 from optparse import OptionParser
 from time import sleep
 import select
+from range import expand
 
 # Import 3rd party modules
 try:
@@ -59,7 +60,7 @@ def normalizeString(string):
     """Removes/fixes leading/trailing newlines/whitespace and escapes double quotes with double quotes (to comply with CSV format)"""
     string = re.sub(r'(\r\n|\r|\n)', '\n', string) # Convert all newlines to unix newlines
     string = string.strip() # Remove leading/trailing whitespace/blank lines
-    string = re.sub(r'(")', '""', string) # Convert double quotes to double double quotes (e.g. 'foo "bar" blah' becomes 'foo ""bar"" blah')
+    srting = re.sub(r'(")', '""', string) # Convert double quotes to double double quotes (e.g. 'foo "bar" blah' becomes 'foo ""bar"" blah')
     return string
 
 class GenericThread(threading.Thread):
@@ -73,15 +74,13 @@ class OutputThread(GenericThread):
         output_queue: Queue.Queue(): The queue to use for incoming messages.
         verbose - Boolean: Whether or not we should output to stdout.
         outfile - String: Path to the file where we'll store results.
-        outputhandle - file or StringIO object where we'll store results.
     """
-    def __init__(self, output_queue, verbose=True, outfile=None, outputhandle=None):
+    def __init__(self, output_queue, verbose=True, outfile=None):
         """Name ourselves and assign the variables we were instanciated with."""
         threading.Thread.__init__(self, name="OutputThread")
         self.output_queue = output_queue
         self.verbose = verbose
         self.outfile = outfile
-        self.outputhandle = outputhandle
         self.quitting = False
 
     def printToStdout(self, string):
@@ -90,7 +89,7 @@ class OutputThread(GenericThread):
             print string
 
     def writeOut(self, queueObj):
-        """Write relevant queueObj information to stdout and/or to the outfile/outputhandle (if one is set)"""
+        """Write relevant queueObj information to stdout and/or to the outfile (if one is set)"""
         if queueObj['local_filepath']:
             queueObj['commands'] = "sshpt: sftp.put %s %s:%s" % (queueObj['local_filepath'], queueObj['host'], queueObj['remote_filepath'])
         elif queueObj['sudo'] is False:
@@ -111,9 +110,6 @@ class OutputThread(GenericThread):
             queueObj['command_output'] = "\n".join(queueObj['command_output'])
         csv_out = "\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"" % (queueObj['host'], queueObj['connection_result'], datetime.datetime.now(), queueObj['commands'], queueObj['command_output'])
         self.printToStdout(csv_out)
-        if self.outputhandle is not None:
-            csv_out = "%s\n" % csv_out
-            self.outputhandle.write(csv_out)
         if self.outfile is not None:
             csv_out = "%s\n" % csv_out
             output = open(self.outfile, 'a')
@@ -203,10 +199,10 @@ class SSHThread(GenericThread):
             print detail
             self.quit()
 
-def startOutputThread(verbose, outfile, outputhandle):
+def startOutputThread(verbose, outfile):
     """Starts up the OutputThread (which is used by SSHThreads to print/write out results)."""
     output_queue = Queue.Queue()
-    output_thread = OutputThread(output_queue, verbose, outfile, outputhandle)
+    output_thread = OutputThread(output_queue, verbose, outfile)
     output_thread.setDaemon(True)
     output_thread.start()
     return output_queue
@@ -273,35 +269,10 @@ def sftpPut(transport, local_filepath, remote_filepath):
         remote_filepath = os.path.normpath(remote_filepath + "/")
     sftp.put(local_filepath, remote_filepath)
 
-def exec_command( transport, command ):
-    return transport.exec_command( command )
-
-#via pty combines stdin, stderr into stdout
-def exec_command_via_pty( transport, command, bufsize=-1 ):
-    chan = transport._transport.open_session() 
-    chan.get_pty()
-    chan.exec_command(command) 
-    stdin = chan.makefile('wb', bufsize) 
-    stdout = chan.makefile('rb', bufsize) 
-    stderr = chan.makefile_stderr('rb', bufsize) 
-    return stdin, stdout, stderr
-
-#combines stderr into stdout, but doesn't preserve order
-def exec_command_combine_stderr( transport, command, bufsize=-1 ):
-    chan = transport._transport.open_session() 
-    chan.set_combine_stderr(True)
-    chan.exec_command(command) 
-    stdin = chan.makefile('wb', bufsize) 
-    stdout = chan.makefile('rb', bufsize) 
-    stderr = chan.makefile_stderr('rb', bufsize) 
-    return stdin, stdout, stderr
-
 def sudoExecute(transport, command, password, run_as='root'):
     """Executes the given command via sudo as the specified user (run_as) using the given Paramiko transport object.
     Returns stdout, stderr (after command execution)"""
-    stdin, stdout, stderr = exec_command(transport, "sudo -S -u %s %s" % (run_as, command))
-    #FB: not using exec_command_via_pty since it sometimes hangs on password input. Timing? 
-    #    Appending stderr to stdout in executeCommand when sudo.
+    stdin, stdout, stderr = transport.exec_command("sudo -S -u %s %s" % (run_as, command))
     if stdout.channel.closed is False: # If stdout is still open then sudo is asking us for a password
         stdin.write('%s\n' % password)
         stdin.flush()
@@ -314,19 +285,9 @@ def executeCommand(transport, command, sudo=False, run_as='root', password=None)
     if sudo:
         stdout, stderr = sudoExecute(transport=transport, command=command, password=password, run_as=run_as)
     else:
-        stdin, stdout, stderr = exec_command(transport, command)
+        stdin, stdout, stderr = transport.exec_command(command)
     command_output = stdout.readlines()
-    command_erroutput = stderr.readlines()
-
-    #sudo asks for a password, don't include this in output
-    if sudo and len(command_erroutput) > 0:
-        command_erroutput.pop(0)
-
     command_output = "".join(command_output)
-    command_erroutput = "".join(command_erroutput)
-    if len(command_erroutput) > 0:
-        command_output = command_output + '\nErrors:\n' + command_erroutput
-
     return command_output
 
 def attemptConnection(
@@ -409,7 +370,6 @@ def sshpt(
         run_as='root', # User to become when using sudo
         verbose=True, # Whether or not we should output connection results to stdout
         outfile=None, # Path to the file where we want to store connection results
-        outputhandle=None, # file object where we want to store connection results
         output_queue=None, # Queue.Queue() where connection results should be put().  If none is given it will use the OutputThread default (output_queue)
         port=22, # Port to use when connecting
         ):
@@ -421,7 +381,7 @@ def sshpt(
     If you're importing this program as a module you can pass this function your own Queue (output_queue) to be used for writing results via your own thread (e.g. to record results into a database or something other than CSV).  Alternatively you can just override the writeOut() method in OutputThread (it's up to you =)."""
 
     if output_queue is None:
-        output_queue = startOutputThread(verbose, outfile, outputhandle)
+        output_queue = startOutputThread(verbose, outfile)
     # Start up the Output and SSH threads
     ssh_connect_queue = startSSHQueue(output_queue, max_threads)
 
@@ -445,6 +405,7 @@ def main():
     parser = OptionParser(usage=usage, version=__version__)
     parser.disable_interspersed_args()
     parser.add_option("-f", "--file", dest="hostfile", default=None, help="Location of the file containing the host list.", metavar="<file>")
+    parser.add_option("-r", "--range", dest="rangecluster", default=None, help="range cluster")
     parser.add_option("-S", "--stdin", dest="stdin", default=False, action="store_true", help="Read hosts from standard input")
     parser.add_option("-o", "--outfile", dest="outfile", default=None, help="Location of the file where the results will be saved.", metavar="<file>")
     parser.add_option("-a", "--authfile", dest="authfile", default=None, help="Location of the file containing the credentials to be used for connections (format is \"username:password\").", metavar="<file>")
@@ -456,7 +417,7 @@ def main():
     parser.add_option("-c", "--copy-file", dest="copy_file", default=None, help="Location of the file to copy to and optionally execute (-x) on hosts.", metavar="<file>")
     parser.add_option("-D", "--dest", dest="destination", default="/tmp/", help="Path where the file should be copied on the remote host (default: /tmp/).", metavar="<path>")
     parser.add_option("-x", "--execute", action="store_true", dest="execute", default=False, help="Execute the copied file (just like executing a given command).")
-    parser.add_option("-r", "--remove", action="store_true", dest="remove", default=False, help="Remove (clean up) the SFTP'd file after execution.")
+    parser.add_option("-d", "--delete", action="store_true", dest="remove", default=False, help="Remove/Delete (clean up) the SFTP'd file after execution.")
     parser.add_option("-T", "--timeout", dest="timeout", default=30, help="Timeout (in seconds) before giving up on an SSH connection (default: 30)", metavar="<seconds>")
     parser.add_option("-s", "--sudo", action="store_true", dest="sudo", default=False, help="Use sudo to execute the command (default: as root).")
     parser.add_option("-U", "--sudouser", dest="run_as", default="root", help="Run the command (via sudo) as this user.", metavar="<username>")
@@ -493,10 +454,9 @@ def main():
     verbose = options.verbose
     outfile = options.outfile
 
-    outputhandle = None
-
-    if options.hostfile == None and not options.stdin:
-        print "Error: You must supply a file (-f <file>) containing the host list to check "
+    if options.hostfile == None and not options.stdin and not options.rangecluster:
+        print "Error: You must supply a range (-r @range_cluster) containing the host list to check "
+        print "or supply a file (-f <file>) containing the host list to check "
         print "or use the --stdin option to provide them via standard input"
         print "Use the -h option to see usage information."
         sys.exit(2)
@@ -505,7 +465,11 @@ def main():
         print "Error: --file and --stdin are mutually exclusive.  Exactly one must be provided."
         sys.exit(2)
 
-    if options.outfile is None and outputhandle is None and options.verbose is False:
+    if options.hostfile and options.rangecluster:
+        print "Error: --file and --range are mutually exclusive.  Exactly one must be provided."
+        sys.exit(2)
+
+    if options.outfile is None and options.verbose is False:
         print "Error: You have not specified any mechanism to output results."
         print "Please don't use quite mode (-q) without an output file (-o <file>)."
         sys.exit(2)
@@ -515,7 +479,9 @@ def main():
         sys.exit(2)
 
     # Read in the host list to check
-    if options.hostfile:
+    if options.rangecluster:
+        hostlist = expand("10.17.100.27",9999,options.rangecluster)
+    elif options.hostfile:
         hostlist = open(options.hostfile).read()
     elif options.stdin:
         # if stdin wasn't piped in, prompt the user for it now
@@ -537,12 +503,11 @@ def main():
         password = getpass.getpass('Password: ')
 
     hostlist_list = []
-
     try: # This wierd little sequence of loops allows us to hit control-C in the middle of program execution and get immediate results
         for host in hostlist.split("\n"): # Turn the hostlist into an actual list
             if host != "":
                 hostlist_list.append(host)
-        output_queue = sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile, outputhandle, port=port)
+        output_queue = sshpt(hostlist_list, username, password, max_threads, timeout, commands, local_filepath, remote_filepath, execute, remove, sudo, run_as, verbose, outfile, port=port)
         output_queue.join() # Just to be safe we wait for the OutputThread to finish before moving on
     except KeyboardInterrupt:
         print 'caught KeyboardInterrupt, exiting...'
