@@ -31,3 +31,5 @@ If you want to use sshpt as a module in your Python program a setup.py has been
 provided:
 
 	sudo python setup.py install
+
+Done
